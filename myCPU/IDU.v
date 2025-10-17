@@ -20,7 +20,7 @@ module IDU(
     // signals and data to EXU
     output wire [31:0] IDU_pc_to_EXU,
     output wire [31:0] IDU_inst_to_EXU,
-    output wire [109:0]IFU_to_EX_ALU_signals,
+    output wire [112:0]IFU_to_EX_ALU_signals,
     output wire  [7:0] IFU_to_EX_pass_signals,
 
     // forwarding from EXU/MEM/WB stage
@@ -54,7 +54,7 @@ wire        br_taken;
 wire        br_taken_cancel;
 wire [31:0] br_target;
 
-wire [11:0] alu_op;
+wire [14:0] alu_op;
 wire        src1_is_pc;
 wire        src2_is_imm;
 wire        res_from_mem;
@@ -115,6 +115,9 @@ wire        inst_beq;
 wire        inst_bne;
 wire        inst_lu12i_w;
 wire        inst_pcaddu12i;
+wire        inst_mul_w;
+wire        inst_mulh_w;
+wire        inst_mulh_wu;
 
 wire        need_ui5;
 wire        need_ui12;
@@ -170,9 +173,6 @@ decoder_4_16 u_dec1(.in(op_25_22 ), .out(op_25_22_d ));
 decoder_2_4  u_dec2(.in(op_21_20 ), .out(op_21_20_d ));
 decoder_5_32 u_dec3(.in(op_19_15 ), .out(op_19_15_d ));
 
-assign inst_sll_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h0e];
-assign inst_srl_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h0f];
-assign inst_sra_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h10];
 assign inst_add_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h00];
 assign inst_sub_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h02];
 assign inst_slt    = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h04];
@@ -181,6 +181,12 @@ assign inst_nor    = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & o
 assign inst_and    = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h09];
 assign inst_or     = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h0a];
 assign inst_xor    = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h0b];
+assign inst_sll_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h0e];
+assign inst_srl_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h0f];
+assign inst_sra_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h10];
+assign inst_mul_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h18];
+assign inst_mulh_w = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h19];
+assign inst_mulh_wu= op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h1a];
 assign inst_slli_w = op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h01];
 assign inst_srli_w = op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h09];
 assign inst_srai_w = op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h11];
@@ -249,7 +255,8 @@ assign rf2_raw_wb  = ID_valid && possible_raw_wb  && use_rkd && (rf_raddr2 == WB
 assign use_rj  = !inst_b && !inst_bl;
 assign use_rkd = inst_beq || inst_bne || inst_sub_w || inst_slt || inst_sltu
                  || inst_nor || inst_and || inst_or || inst_xor || inst_st_w || inst_add_w
-                 || inst_sll_w || inst_srl_w || inst_sra_w;
+                 || inst_sll_w || inst_srl_w || inst_sra_w
+                 || inst_mul_w || inst_mulh_w || inst_mulh_wu;
 assign EXU_raw = (rf1_raw_exu || rf2_raw_exu);
 assign MEM_raw = (rf1_raw_mem || rf2_raw_mem);
 assign WB_raw  = (rf1_raw_wb  || rf2_raw_wb);
@@ -305,6 +312,9 @@ assign alu_op[ 8] = inst_slli_w | inst_sll_w;
 assign alu_op[ 9] = inst_srli_w | inst_srl_w;
 assign alu_op[10] = inst_srai_w | inst_sra_w;
 assign alu_op[11] = inst_lu12i_w;
+assign alu_op[12] = inst_mul_w;
+assign alu_op[13] = inst_mulh_w;
+assign alu_op[14] = inst_mulh_wu;
 
 assign imm = src2_is_4 ? 32'h4                      :
              need_si20 ? {i20[19:0], 12'b0}         :
@@ -326,9 +336,9 @@ assign IFU_to_EX_ALU_signals = {
     rj_value,      // [31:0]
     rkd_value,     // [63:32]
     imm,           // [95:64]
-    alu_op,        // [107:96]
-    src1_is_pc,    // [108]
-    src2_is_imm    // [109]
+    alu_op,        // [110:96]
+    src1_is_pc,    // [111]
+    src2_is_imm    // [112]
 };
 
 ////////////////////////////////////////////////////////////////////////

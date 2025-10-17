@@ -57,7 +57,7 @@ wire        IDU_to_EXU_valid;
 wire        IDU_ready_go;
 wire [31:0] IDU_pc_to_EXU;
 wire [31:0] IDU_inst_to_EXU;
-wire [109:0] IDU_to_EX_ALU_signals;
+wire [112:0] IDU_to_EX_ALU_signals;
 wire  [7:0] IDU_to_EX_pass_signals;
 wire [ 4:0] rf_raddr1;
 wire [ 4:0] rf_raddr2;

@@ -1,5 +1,5 @@
 module alu(
-  input  wire [11:0] alu_op,
+  input  wire [14:0] alu_op,
   input  wire [31:0] alu_src1,
   input  wire [31:0] alu_src2,
   output wire [31:0] alu_result
@@ -31,6 +31,9 @@ assign op_sll  = alu_op[ 8];
 assign op_srl  = alu_op[ 9];
 assign op_sra  = alu_op[10];
 assign op_lui  = alu_op[11];
+assign op_mul  = alu_op[12];
+assign op_mulh = alu_op[13];
+assign op_mulh_wu = alu_op[14];
 
 wire [31:0] add_sub_result;
 wire [31:0] slt_result;
@@ -43,7 +46,8 @@ wire [31:0] lui_result;
 wire [31:0] sll_result;
 wire [63:0] sr64_result;
 wire [31:0] sr_result;
-
+wire [65:0] mul_product;
+wire [31:0] mul_result;
 
 // 32-bit adder
 wire [31:0] adder_a;
@@ -51,6 +55,14 @@ wire [31:0] adder_b;
 wire        adder_cin;
 wire [31:0] adder_result;
 wire        adder_cout;
+
+// 33-bit multiplier
+wire [32:0] mul_src1;
+wire [32:0] mul_src2;
+assign mul_src1 = (op_mulh || op_mulh_wu) ? {alu_src1[31], alu_src1} : {1'b0, alu_src1}; 
+assign mul_src2 = (op_mulh || op_mulh_wu) ? {alu_src2[31], alu_src2} : {1'b0, alu_src2};
+assign mul_product = $signed(mul_src1) * $signed(mul_src2);
+assign mul_result = op_mul ? mul_product[31:0] : mul_product[63:32];
 
 assign adder_a   = alu_src1;
 assign adder_b   = (op_sub | op_slt | op_sltu) ? ~alu_src2 : alu_src2;  //src1 - src2 rj-rk
@@ -94,6 +106,7 @@ assign alu_result = ({32{op_add|op_sub}} & add_sub_result)
                   | ({32{op_xor       }} & xor_result)
                   | ({32{op_lui       }} & lui_result)
                   | ({32{op_sll       }} & sll_result)
-                  | ({32{op_srl|op_sra}} & sr_result);
+                  | ({32{op_srl|op_sra}} & sr_result)
+                  | ({32{op_mul|op_mulh|op_mulh_wu}} & mul_result);
 
 endmodule

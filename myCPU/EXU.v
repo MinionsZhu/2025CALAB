@@ -12,7 +12,7 @@ module EXU(
     // data from IDU
     input  wire  [31:0] IDU_pc_to_EXU,
     input  wire  [31:0] IDU_inst_to_EXU,
-    input  wire [109:0] IDU_to_EX_ALU_signals,
+    input  wire [112:0] IDU_to_EX_ALU_signals,
     input  wire   [7:0] IDU_to_EX_pass_signals,
     
     // to MEM
@@ -37,13 +37,13 @@ module EXU(
 reg EX_valid;
 reg [31:0] inst_reg;
 reg [31:0] pc_reg;
-reg [109:0] alu_signals_reg;
+reg [112:0] alu_signals_reg;
 reg [7:0] pass_signals_reg;
 
 wire [31:0] pc;
 wire [31:0] inst;
 
-wire [11:0] alu_op;
+wire [14:0] alu_op;
 wire [31:0] rj_value;
 wire [31:0] rkd_value;
 wire [31:0] imm;
@@ -76,7 +76,7 @@ always @(posedge clk) begin
 end
 always @(posedge clk) begin
     if (reset) begin
-        alu_signals_reg <= 110'b0;
+        alu_signals_reg <= 113'b0;
     end
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
         alu_signals_reg <= IDU_to_EX_ALU_signals;
