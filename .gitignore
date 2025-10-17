@@ -1,0 +1,4 @@
+soc_verify/
+*.log
+*.tmp
+!soc_verify/*/*.bit
