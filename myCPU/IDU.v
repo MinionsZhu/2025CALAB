@@ -22,6 +22,7 @@ module IDU(
     output wire [31:0] IDU_inst_to_EXU,
     output wire [112:0]IFU_to_EX_ALU_signals,
     output wire  [7:0] IFU_to_EX_pass_signals,
+    output wire  [4:0] IFU_to_EX_div_signals,
 
     // forwarding from EXU/MEM/WB stage
     input  wire  [4:0] EXU_dest,
@@ -118,6 +119,10 @@ wire        inst_pcaddu12i;
 wire        inst_mul_w;
 wire        inst_mulh_w;
 wire        inst_mulh_wu;
+wire        inst_div_w;
+wire        inst_mod_w;
+wire        inst_div_wu;
+wire        inst_mod_wu;
 
 wire        need_ui5;
 wire        need_ui12;
@@ -205,6 +210,10 @@ assign inst_beq    = op_31_26_d[6'h16];
 assign inst_bne    = op_31_26_d[6'h17];
 assign inst_lu12i_w= op_31_26_d[6'h05] & ~inst[25];
 assign inst_pcaddu12i = op_31_26_d[6'h07] & ~inst[25];
+assign inst_div_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h00];
+assign inst_mod_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h01];
+assign inst_div_wu = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h02];
+assign inst_mod_wu = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h03];
 
 assign need_ui5   =  inst_slli_w | inst_srli_w | inst_srai_w;
 assign need_si12  =  inst_addi_w | inst_ld_w | inst_st_w | inst_slti | inst_sltui;
@@ -339,6 +348,21 @@ assign IFU_to_EX_ALU_signals = {
     alu_op,        // [110:96]
     src1_is_pc,    // [111]
     src2_is_imm    // [112]
+};
+
+////////////////////////////////////////////////////////////////////////
+//////                      divider signals                      ///////
+////////////////////////////////////////////////////////////////////////
+wire        use_div;
+wire [3:0]  div_op;
+assign use_div = inst_div_w | inst_mod_w | inst_div_wu | inst_mod_wu;
+assign div_op[0] = inst_div_w;
+assign div_op[1] = inst_mod_w;
+assign div_op[2] = inst_div_wu;
+assign div_op[3] = inst_mod_wu;
+assign IFU_to_EX_div_signals = {
+    use_div,    // [4]
+    div_op      // [3:0]
 };
 
 ////////////////////////////////////////////////////////////////////////

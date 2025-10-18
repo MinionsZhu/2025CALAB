@@ -12,7 +12,7 @@ module MEMU(
     // data from EXU
     input  wire [31:0] EXU_pc_to_MEM,
     input  wire [31:0] EXU_inst_to_MEM,
-    input  wire [31:0] EXU_alu_result_to_MEM,
+    input  wire [31:0] EXU_result_to_MEM,
     input  wire  [6:0] EXU_signals_pass_to_MEM,
 
     // data from data sram
@@ -34,7 +34,7 @@ reg MEM_valid;
 
 reg [31:0] inst_reg;
 reg [31:0] pc_reg;
-reg [31:0] alu_result_reg;
+reg [31:0] ex_result_reg;
 reg  [6:0] signals_pass_reg;
 
 wire [31:0] pc;
@@ -65,10 +65,10 @@ end
 
 always @(posedge clk) begin
     if (reset) begin
-        alu_result_reg <= 32'b0;
+        ex_result_reg <= 32'b0;
     end
     else if (MEM_allow_in && EXU_to_MEM_valid) begin
-        alu_result_reg <= EXU_alu_result_to_MEM;
+        ex_result_reg <= EXU_result_to_MEM;
     end
 end
 
@@ -82,13 +82,13 @@ always @(posedge clk) begin
 end
 assign pc = pc_reg;
 assign inst = inst_reg;
-assign alu_result = alu_result_reg;
+assign ex_result = ex_result_reg;
 assign signals_pass = signals_pass_reg;
 assign {res_from_mem, gr_we, dest} = signals_pass;
 
 assign MEM_pc_to_WB = pc;
 assign MEM_inst_to_WB = inst;
-assign MEM_result_to_WB = res_from_mem ? data_sram_rdata : alu_result;
+assign MEM_result_to_WB = res_from_mem ? data_sram_rdata : ex_result;
 
 assign MEM_signals_pass_to_WB = {gr_we, dest};
 

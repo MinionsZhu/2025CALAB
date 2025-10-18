@@ -14,11 +14,12 @@ module EXU(
     input  wire  [31:0] IDU_inst_to_EXU,
     input  wire [112:0] IDU_to_EX_ALU_signals,
     input  wire   [7:0] IDU_to_EX_pass_signals,
+    input  wire   [4:0] IDU_to_EX_div_signals,
     
     // to MEM
     output wire [31:0] EXU_pc_to_MEM,
     output wire [31:0] EXU_inst_to_MEM,
-    output wire [31:0] EXU_alu_result_to_MEM,
+    output wire [31:0] EXU_result_to_MEM,
     output wire  [6:0] EXU_signals_pass_to_MEM,
 
     // to IDU
@@ -34,11 +35,18 @@ module EXU(
     output wire [31:0] data_sram_addr,
     output wire [31:0] data_sram_wdata
 );
-reg EX_valid;
-reg [31:0] inst_reg;
-reg [31:0] pc_reg;
+reg         EX_valid;
+reg [ 31:0] inst_reg;
+reg [ 31:0] pc_reg;
 reg [112:0] alu_signals_reg;
-reg [7:0] pass_signals_reg;
+reg  [ 7:0] pass_signals_reg;
+reg  [ 4:0] div_signals_reg;
+reg signed_div_dividend_tvalid_reg;
+reg signed_div_divisor_tvalid_reg;
+reg unsigned_div_dividend_tvalid_reg;
+reg unsigned_div_divisor_tvalid_reg;
+reg signed_div_working;
+reg unsigned_div_working;
 
 wire [31:0] pc;
 wire [31:0] inst;
@@ -53,10 +61,37 @@ wire        res_from_mem;
 wire        gr_we;
 wire        mem_we;
 wire [ 4:0] dest;
+wire        use_div;
+wire [ 3:0] div_op;
 
 wire [31:0] alu_src1;
 wire [31:0] alu_src2;
 wire [31:0] alu_result;
+
+wire [31:0] signed_div_dividend_tdata;
+wire [31:0] signed_div_divisor_tdata;
+wire        signed_div_dividend_tvalid;
+wire        signed_div_divisor_tvalid;
+wire        signed_div_dividend_tready;
+wire        signed_div_divisor_tready;
+wire [63:0] signed_div_result;
+wire        signed_div_dout_valid;
+wire [31:0] signed_div_remainder;
+wire [31:0] signed_div_quotient;
+
+wire [31:0] unsigned_div_dividend_tdata;
+wire [31:0] unsigned_div_divisor_tdata;
+wire        unsigned_div_dividend_tvalid;
+wire        unsigned_div_divisor_tvalid;
+wire        unsigned_div_dividend_tready;
+wire        unsigned_div_divisor_tready;
+wire [63:0] unsigned_div_result;
+wire        unsigned_div_dout_valid;
+wire [31:0] unsigned_div_remainder;
+wire [31:0] unsigned_div_quotient;
+wire [31:0] final_div_result;
+
+wire [31:0] EXU_result;
 
 always @(posedge clk) begin
     if (reset) begin
@@ -90,6 +125,80 @@ always @(posedge clk) begin
         pass_signals_reg <= IDU_to_EX_pass_signals;
     end
 end
+always @(posedge clk) begin
+    if (reset) begin
+        div_signals_reg <= 5'b0;
+    end
+    else if (EXU_allow_in && IDU_to_EXU_valid) begin
+        div_signals_reg <= IDU_to_EX_div_signals;
+    end
+end
+always @(posedge clk) begin
+    if (reset) begin
+        signed_div_dividend_tvalid_reg <= 1'b0;
+    end
+    else if (signed_div_dividend_tready) begin
+        signed_div_dividend_tvalid_reg <= 1'b0;
+    end
+    else if (use_div && (div_op[0] | div_op[1]) && !signed_div_working) begin
+        signed_div_dividend_tvalid_reg <= 1'b1;
+    end
+end
+always @(posedge clk) begin
+    if (reset) begin
+        signed_div_divisor_tvalid_reg <= 1'b0;
+    end
+    else if (signed_div_divisor_tready) begin
+        signed_div_divisor_tvalid_reg <= 1'b0;
+    end
+    else if (use_div && (div_op[0] | div_op[1]) && !signed_div_working) begin
+        signed_div_divisor_tvalid_reg <= 1'b1;
+    end
+end
+always @(posedge clk) begin
+    if (reset) begin
+        unsigned_div_dividend_tvalid_reg <= 1'b0;
+    end
+    else if (unsigned_div_dividend_tready) begin
+        unsigned_div_dividend_tvalid_reg <= 1'b0;
+    end
+    else if (use_div && (div_op[2] | div_op[3]) && !unsigned_div_working) begin
+        unsigned_div_dividend_tvalid_reg <= 1'b1;
+    end
+end
+always @(posedge clk) begin
+    if (reset) begin
+        unsigned_div_divisor_tvalid_reg <= 1'b0;
+    end
+    else if (unsigned_div_divisor_tready) begin
+        unsigned_div_divisor_tvalid_reg <= 1'b0;
+    end
+    else if (use_div && (div_op[2] | div_op[3]) && !unsigned_div_working) begin
+        unsigned_div_divisor_tvalid_reg <= 1'b1;
+    end
+end
+always @(posedge clk) begin
+    if (reset) begin
+        signed_div_working <= 1'b0;
+    end
+    else if (signed_div_dout_valid) begin
+        signed_div_working <= 1'b0;
+    end
+    else if (signed_div_dividend_tvalid_reg && signed_div_divisor_tvalid_reg) begin
+        signed_div_working <= 1'b1;
+    end
+end
+always @(posedge clk) begin
+    if (reset) begin
+        unsigned_div_working <= 1'b0;
+    end
+    else if (unsigned_div_dout_valid) begin
+        unsigned_div_working <= 1'b0;
+    end
+    else if (unsigned_div_dividend_tvalid_reg && unsigned_div_divisor_tvalid_reg) begin
+        unsigned_div_working <= 1'b1;
+    end
+end
 
 assign alu_src1 = src1_is_pc ? pc : rj_value;
 assign alu_src2 = src2_is_imm ? imm : rkd_value;
@@ -100,13 +209,58 @@ alu EXU_alu(
     .alu_src2 (alu_src2),
     .alu_result  (alu_result)
 );
+
+assign use_div = div_signals_reg[4];
+assign div_op  = div_signals_reg[3:0];
+assign signed_div_dividend_tdata = rj_value;
+assign signed_div_divisor_tdata  = rkd_value;
+assign signed_div_dividend_tvalid = signed_div_dividend_tvalid_reg;
+assign signed_div_divisor_tvalid  = signed_div_divisor_tvalid_reg;
+assign unsigned_div_dividend_tdata = rj_value;
+assign unsigned_div_divisor_tdata  = rkd_value;
+assign unsigned_div_dividend_tvalid = unsigned_div_dividend_tvalid_reg;
+assign unsigned_div_divisor_tvalid  = unsigned_div_divisor_tvalid_reg;
+
+mydiv_signed EXU_div_signed(
+    .s_axis_divisor_tdata (signed_div_divisor_tdata),
+    .s_axis_divisor_tready (signed_div_divisor_tready),
+    .s_axis_divisor_tvalid (signed_div_divisor_tvalid),
+    .s_axis_dividend_tdata (signed_div_dividend_tdata),
+    .s_axis_dividend_tready (signed_div_dividend_tready),
+    .s_axis_dividend_tvalid (signed_div_dividend_tvalid),
+    .m_axis_dout_tdata (signed_div_result),
+    .m_axis_dout_tvalid (signed_div_dout_valid),
+    .aclk(clk)
+);
+
+mydiv_unsigned EXU_div_unsigned(
+    .s_axis_divisor_tdata (unsigned_div_divisor_tdata),
+    .s_axis_divisor_tready (unsigned_div_divisor_tready),
+    .s_axis_divisor_tvalid (unsigned_div_divisor_tvalid),
+    .s_axis_dividend_tdata (unsigned_div_dividend_tdata),
+    .s_axis_dividend_tready (unsigned_div_dividend_tready),
+    .s_axis_dividend_tvalid (unsigned_div_dividend_tvalid),
+    .m_axis_dout_tdata (unsigned_div_result),
+    .m_axis_dout_tvalid (unsigned_div_dout_valid),
+    .aclk(clk)
+);
+assign signed_div_remainder  = signed_div_result[31:0];
+assign signed_div_quotient   = signed_div_result[63:32];
+assign unsigned_div_remainder= unsigned_div_result[31:0];
+assign unsigned_div_quotient = unsigned_div_result[63:32];
+assign final_div_result = (div_op[0]) ? signed_div_quotient :
+                          (div_op[1]) ? signed_div_remainder :
+                          (div_op[2]) ? unsigned_div_quotient :
+                          (div_op[3]) ? unsigned_div_remainder : 32'b0;
+
+assign EXU_result = use_div ? final_div_result : alu_result;
 assign pc = pc_reg;
 assign inst = inst_reg;
 assign {rj_value, rkd_value, imm, alu_op, src1_is_pc, src2_is_imm} = alu_signals_reg;
 assign {res_from_mem, gr_we, mem_we, dest} = pass_signals_reg;
 assign EXU_pc_to_MEM = pc;
 assign EXU_inst_to_MEM = inst;
-assign EXU_alu_result_to_MEM = alu_result;
+assign EXU_result_to_MEM = EXU_result;
 assign EXU_signals_pass_to_MEM = {res_from_mem, gr_we, dest};
 
 // to data sram interface
@@ -119,7 +273,7 @@ assign data_sram_wdata = rkd_value;
 assign EXU_to_IDU_gr_we = gr_we;
 assign EXU_to_IDU_dest  = dest;
 assign EXU_to_IDU_valid = EX_valid;
-assign EXU_to_IDU_forward = alu_result;
+assign EXU_to_IDU_forward = EXU_result;
 assign EXU_current_is_ld = res_from_mem && EX_valid;
 
 // EX status
@@ -131,7 +285,7 @@ always @(posedge clk) begin
         EX_valid <= IDU_to_EXU_valid;
     end
 end
-assign EXU_ready_go = 1'b1;
+assign EXU_ready_go = use_div ? (signed_div_dout_valid | unsigned_div_dout_valid) : 1'b1;
 assign EXU_to_MEM_valid = EX_valid && EXU_ready_go;
 assign EXU_allow_in = !EX_valid || (EXU_ready_go && MEM_allow_in);
 

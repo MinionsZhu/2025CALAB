@@ -76,6 +76,7 @@ wire        WB_to_IDU_gr_we;
 wire  [4:0] WB_to_IDU_dest;
 wire        WB_to_IDU_valid;
 wire [31:0] WB_to_IDU_forward;
+wire  [4:0] IFU_to_EX_div_signals;
 
 IDU u_IDU(
     .clk                (clk                ),
@@ -99,6 +100,7 @@ IDU u_IDU(
     .IDU_inst_to_EXU   (IDU_inst_to_EXU    ),
     .IFU_to_EX_ALU_signals(IDU_to_EX_ALU_signals),
     .IFU_to_EX_pass_signals(IDU_to_EX_pass_signals),
+    .IFU_to_EX_div_signals (IFU_to_EX_div_signals ),
     // forwarding from EXU/MEMU/WBU
     .EXU_gr_we         (EXU_to_IDU_gr_we   ),
     .EXU_dest          (EXU_to_IDU_dest    ),
@@ -125,7 +127,7 @@ wire        EXU_ready_go;
 wire        EXU_to_MEM_valid;
 wire [31:0] EXU_pc_to_MEM;
 wire [31:0] EXU_inst_to_MEM;
-wire [31:0] EXU_alu_result_to_MEM;
+wire [31:0] EXU_result_to_MEM;
 wire  [6:0] EXU_signals_pass_to_MEM;
 EXU u_EXU(
     .clk                    (clk                    ),
@@ -142,10 +144,11 @@ EXU u_EXU(
     .IDU_inst_to_EXU        (IDU_inst_to_EXU        ),
     .IDU_to_EX_ALU_signals  (IDU_to_EX_ALU_signals  ),
     .IDU_to_EX_pass_signals (IDU_to_EX_pass_signals ),
+    .IDU_to_EX_div_signals  (IFU_to_EX_div_signals  ),
     // to MEM
     .EXU_pc_to_MEM          (EXU_pc_to_MEM          ),
     .EXU_inst_to_MEM        (EXU_inst_to_MEM        ),
-    .EXU_alu_result_to_MEM  (EXU_alu_result_to_MEM  ),
+    .EXU_result_to_MEM      (EXU_result_to_MEM      ),
     .EXU_signals_pass_to_MEM(EXU_signals_pass_to_MEM),
     // to IDU
     .EXU_to_IDU_gr_we       (EXU_to_IDU_gr_we       ),
@@ -180,7 +183,7 @@ MEMU u_MEMU(
     // data from EXU
     .EXU_pc_to_MEM      (EXU_pc_to_MEM      ),
     .EXU_inst_to_MEM    (EXU_inst_to_MEM    ), 
-    .EXU_alu_result_to_MEM(EXU_alu_result_to_MEM),
+    .EXU_result_to_MEM  (EXU_result_to_MEM),
     .EXU_signals_pass_to_MEM(EXU_signals_pass_to_MEM),
     // data from data sram
     .data_sram_rdata    (data_sram_rdata    ),
