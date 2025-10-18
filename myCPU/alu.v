@@ -59,8 +59,8 @@ wire        adder_cout;
 // 33-bit multiplier
 wire [32:0] mul_src1;
 wire [32:0] mul_src2;
-assign mul_src1 = (op_mulh || op_mulh_wu) ? {alu_src1[31], alu_src1} : {1'b0, alu_src1}; 
-assign mul_src2 = (op_mulh || op_mulh_wu) ? {alu_src2[31], alu_src2} : {1'b0, alu_src2};
+assign mul_src1 = (op_mulh || op_mul) ? {alu_src1[31], alu_src1} : {1'b0, alu_src1}; 
+assign mul_src2 = (op_mulh || op_mul) ? {alu_src2[31], alu_src2} : {1'b0, alu_src2};
 assign mul_product = $signed(mul_src1) * $signed(mul_src2);
 assign mul_result = op_mul ? mul_product[31:0] : mul_product[63:32];
 
