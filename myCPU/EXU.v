@@ -45,8 +45,6 @@ reg signed_div_dividend_tvalid_reg;
 reg signed_div_divisor_tvalid_reg;
 reg unsigned_div_dividend_tvalid_reg;
 reg unsigned_div_divisor_tvalid_reg;
-reg signed_div_working;
-reg unsigned_div_working;
 
 wire [31:0] pc;
 wire [31:0] inst;
@@ -137,69 +135,47 @@ always @(posedge clk) begin
     if (reset) begin
         signed_div_dividend_tvalid_reg <= 1'b0;
     end
+    else if (EXU_allow_in && IDU_to_EXU_valid) begin
+        signed_div_dividend_tvalid_reg <= IDU_to_EX_div_signals[4] && (IDU_to_EX_div_signals[0] | IDU_to_EX_div_signals[1]);
+    end
     else if (signed_div_dividend_tready) begin
         signed_div_dividend_tvalid_reg <= 1'b0;
     end
-    else if (use_div && (div_op[0] | div_op[1]) && !signed_div_working) begin
-        signed_div_dividend_tvalid_reg <= 1'b1;
-    end
 end
+
 always @(posedge clk) begin
     if (reset) begin
         signed_div_divisor_tvalid_reg <= 1'b0;
+    end
+    else if (EXU_allow_in && IDU_to_EXU_valid) begin
+        signed_div_divisor_tvalid_reg <= IDU_to_EX_div_signals[4] && (IDU_to_EX_div_signals[0] | IDU_to_EX_div_signals[1]);
     end
     else if (signed_div_divisor_tready) begin
         signed_div_divisor_tvalid_reg <= 1'b0;
     end
-    else if (use_div && (div_op[0] | div_op[1]) && !signed_div_working) begin
-        signed_div_divisor_tvalid_reg <= 1'b1;
-    end
 end
 always @(posedge clk) begin
     if (reset) begin
         unsigned_div_dividend_tvalid_reg <= 1'b0;
+    end
+    else if (EXU_allow_in && IDU_to_EXU_valid) begin
+        unsigned_div_dividend_tvalid_reg <= IDU_to_EX_div_signals[4] && (IDU_to_EX_div_signals[2] | IDU_to_EX_div_signals[3]);
     end
     else if (unsigned_div_dividend_tready) begin
         unsigned_div_dividend_tvalid_reg <= 1'b0;
     end
-    else if (use_div && (div_op[2] | div_op[3]) && !unsigned_div_working) begin
-        unsigned_div_dividend_tvalid_reg <= 1'b1;
-    end
 end
 always @(posedge clk) begin
     if (reset) begin
         unsigned_div_divisor_tvalid_reg <= 1'b0;
+    end
+    else if (EXU_allow_in && IDU_to_EXU_valid) begin
+        unsigned_div_divisor_tvalid_reg <= IDU_to_EX_div_signals[4] && (IDU_to_EX_div_signals[2] | IDU_to_EX_div_signals[3]);
     end
     else if (unsigned_div_divisor_tready) begin
         unsigned_div_divisor_tvalid_reg <= 1'b0;
     end
-    else if (use_div && (div_op[2] | div_op[3]) && !unsigned_div_working) begin
-        unsigned_div_divisor_tvalid_reg <= 1'b1;
-    end
 end
-always @(posedge clk) begin
-    if (reset) begin
-        signed_div_working <= 1'b0;
-    end
-    else if (signed_div_dout_valid) begin
-        signed_div_working <= 1'b0;
-    end
-    else if (signed_div_dividend_tvalid_reg && signed_div_divisor_tvalid_reg) begin
-        signed_div_working <= 1'b1;
-    end
-end
-always @(posedge clk) begin
-    if (reset) begin
-        unsigned_div_working <= 1'b0;
-    end
-    else if (unsigned_div_dout_valid) begin
-        unsigned_div_working <= 1'b0;
-    end
-    else if (unsigned_div_dividend_tvalid_reg && unsigned_div_divisor_tvalid_reg) begin
-        unsigned_div_working <= 1'b1;
-    end
-end
-
 assign alu_src1 = src1_is_pc ? pc : rj_value;
 assign alu_src2 = src2_is_imm ? imm : rkd_value;
 

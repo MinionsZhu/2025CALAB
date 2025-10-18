@@ -265,7 +265,8 @@ assign use_rj  = !inst_b && !inst_bl;
 assign use_rkd = inst_beq || inst_bne || inst_sub_w || inst_slt || inst_sltu
                  || inst_nor || inst_and || inst_or || inst_xor || inst_st_w || inst_add_w
                  || inst_sll_w || inst_srl_w || inst_sra_w
-                 || inst_mul_w || inst_mulh_w || inst_mulh_wu;
+                 || inst_mul_w || inst_mulh_w || inst_mulh_wu
+                 || inst_div_w || inst_mod_w || inst_div_wu || inst_mod_wu;
 assign EXU_raw = (rf1_raw_exu || rf2_raw_exu);
 assign MEM_raw = (rf1_raw_mem || rf2_raw_mem);
 assign WB_raw  = (rf1_raw_wb  || rf2_raw_wb);

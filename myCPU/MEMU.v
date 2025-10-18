@@ -44,6 +44,7 @@ wire  [6:0] signals_pass;
 wire  [4:0] dest;
 wire        gr_we;
 wire        res_from_mem;
+wire [31:0] ex_result;
 
 always @(posedge clk) begin
     if (reset) begin
