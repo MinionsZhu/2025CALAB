@@ -12,7 +12,7 @@ module WBU(
     input  wire [31:0] MEM_pc_to_WB,
     input  wire [31:0] MEM_inst_to_WB,
     input  wire [31:0] MEM_result_to_WB,
-    input  wire  [5:0] MEM_signals_pass_to_WB,
+    input  wire [ 5:0] MEM_signals_pass_to_WB,
 
     // register file interface
     output wire [ 4:0] rf_waddr,
@@ -21,7 +21,7 @@ module WBU(
 
     // to IDU
     output wire        WB_to_IDU_gr_we,
-    output wire  [4:0] WB_to_IDU_dest,
+    output wire [ 4:0] WB_to_IDU_dest,
     output wire        WB_to_IDU_valid,
     output wire [31:0] WB_to_IDU_forward,
 
@@ -35,13 +35,14 @@ reg WB_valid;
 reg [31:0] inst_reg;
 reg [31:0] pc_reg;
 reg [31:0] result_reg;
-reg  [5:0] signals_pass_reg;
+reg [ 5:0] signals_pass_reg;
+
 wire [31:0] pc;
 wire [31:0] inst;
 wire [31:0] result;
-wire  [5:0] signals_pass;
+wire [ 5:0] signals_pass;
 wire        gr_we;
-wire  [4:0] dest;
+wire [ 4:0] dest;
 
 always @(posedge clk) begin
     if (reset) begin

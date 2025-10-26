@@ -57,30 +57,30 @@ wire        IDU_to_EXU_valid;
 wire        IDU_ready_go;
 wire [31:0] IDU_pc_to_EXU;
 wire [31:0] IDU_inst_to_EXU;
-wire [112:0] IDU_to_EX_ALU_signals;
-wire  [7:0] IDU_to_EX_pass_signals;
+wire [112:0]IDU_to_EX_ALU_signals;
+wire [13:0] IDU_to_EX_pass_signals;
 wire [ 4:0] rf_raddr1;
 wire [ 4:0] rf_raddr2;
 wire [31:0] rf_rdata1;
 wire [31:0] rf_rdata2;
 wire        EXU_to_IDU_gr_we;
-wire  [4:0] EXU_to_IDU_dest;
+wire [ 4:0] EXU_to_IDU_dest;
 wire        EXU_to_IDU_valid;
 wire [31:0] EXU_to_IDU_forward;
 wire        EXU_current_is_ld;
 wire        MEM_to_IDU_gr_we;
-wire  [4:0] MEM_to_IDU_dest;
+wire [ 4:0] MEM_to_IDU_dest;
 wire        MEM_to_IDU_valid;
 wire [31:0] MEM_to_IDU_forward;
 wire        WB_to_IDU_gr_we;
-wire  [4:0] WB_to_IDU_dest;
+wire [ 4:0] WB_to_IDU_dest;
 wire        WB_to_IDU_valid;
 wire [31:0] WB_to_IDU_forward;
-wire  [4:0] IFU_to_EX_div_signals;
+wire [ 4:0] IDU_to_EX_div_signals;
 
 IDU u_IDU(
-    .clk                (clk                ),
-    .reset              (reset              ),
+    .clk               (clk                ),
+    .reset             (reset              ),
     // from IFU
     .pc_from_IFU       (pc_to_IDU          ),
     .inst_from_IFU     (inst_to_IDU        ),
@@ -98,9 +98,9 @@ IDU u_IDU(
     // signals and data to EXU
     .IDU_pc_to_EXU     (IDU_pc_to_EXU      ),
     .IDU_inst_to_EXU   (IDU_inst_to_EXU    ),
-    .IFU_to_EX_ALU_signals(IDU_to_EX_ALU_signals),
-    .IFU_to_EX_pass_signals(IDU_to_EX_pass_signals),
-    .IFU_to_EX_div_signals (IFU_to_EX_div_signals ),
+    .IDU_to_EX_ALU_signals(IDU_to_EX_ALU_signals),
+    .IDU_to_EX_pass_signals(IDU_to_EX_pass_signals),
+    .IDU_to_EX_div_signals (IDU_to_EX_div_signals ),
     // forwarding from EXU/MEMU/WBU
     .EXU_gr_we         (EXU_to_IDU_gr_we   ),
     .EXU_dest          (EXU_to_IDU_dest    ),
@@ -128,7 +128,7 @@ wire        EXU_to_MEM_valid;
 wire [31:0] EXU_pc_to_MEM;
 wire [31:0] EXU_inst_to_MEM;
 wire [31:0] EXU_result_to_MEM;
-wire  [6:0] EXU_signals_pass_to_MEM;
+wire [12:0] EXU_signals_pass_to_MEM;
 EXU u_EXU(
     .clk                    (clk                    ),
     .reset                  (reset                  ),
@@ -144,7 +144,7 @@ EXU u_EXU(
     .IDU_inst_to_EXU        (IDU_inst_to_EXU        ),
     .IDU_to_EX_ALU_signals  (IDU_to_EX_ALU_signals  ),
     .IDU_to_EX_pass_signals (IDU_to_EX_pass_signals ),
-    .IDU_to_EX_div_signals  (IFU_to_EX_div_signals  ),
+    .IDU_to_EX_div_signals  (IDU_to_EX_div_signals  ),
     // to MEM
     .EXU_pc_to_MEM          (EXU_pc_to_MEM          ),
     .EXU_inst_to_MEM        (EXU_inst_to_MEM        ),
@@ -169,7 +169,7 @@ wire        MEM_to_WB_valid;
 wire [31:0] MEM_pc_to_WB;
 wire [31:0] MEM_inst_to_WB;
 wire [31:0] MEM_result_to_WB;
-wire  [5:0] MEM_signals_pass_to_WB;
+wire [ 5:0] MEM_signals_pass_to_WB;
 MEMU u_MEMU(
     .clk                (clk                ),
     .reset              (reset              ),

@@ -20,21 +20,21 @@ module IDU(
     // signals and data to EXU
     output wire [31:0] IDU_pc_to_EXU,
     output wire [31:0] IDU_inst_to_EXU,
-    output wire [112:0]IFU_to_EX_ALU_signals,
-    output wire  [7:0] IFU_to_EX_pass_signals,
-    output wire  [4:0] IFU_to_EX_div_signals,
+    output wire[112:0] IDU_to_EX_ALU_signals,
+    output wire [13:0] IDU_to_EX_pass_signals,
+    output wire [ 4:0] IDU_to_EX_div_signals,
 
     // forwarding from EXU/MEM/WB stage
-    input  wire  [4:0] EXU_dest,
+    input  wire [ 4:0] EXU_dest,
     input  wire        EXU_gr_we,
     input  wire        EXU_valid,
     input  wire [31:0] EXU_to_ID_forward,
     input  wire        EXU_current_is_ld,
-    input  wire  [4:0] MEM_dest,
+    input  wire [ 4:0] MEM_dest,
     input  wire        MEM_gr_we,
     input  wire        MEM_valid,
     input  wire [31:0] MEM_to_ID_forward,
-    input  wire  [4:0] WB_dest,
+    input  wire [ 4:0] WB_dest,
     input  wire        WB_gr_we,
     input  wire        WB_valid,
     input  wire [31:0] WB_to_ID_forward,
@@ -45,9 +45,9 @@ module IDU(
     input  wire [31:0] rf_rdata1,
     input  wire [31:0] rf_rdata2
 );
-reg ID_valid;
-reg [31:0] inst_reg;
-reg [31:0] pc_reg;
+reg         ID_valid;
+reg  [31:0] inst_reg;
+reg  [31:0] pc_reg;
 
 wire [31:0] inst;
 wire [31:0] pc;
@@ -58,12 +58,15 @@ wire [31:0] br_target;
 wire [14:0] alu_op;
 wire        src1_is_pc;
 wire        src2_is_imm;
-wire        res_from_mem;
+wire [ 4:0] res_from_mem;
 wire        dst_is_r1;
 wire        gr_we;
-wire        mem_we;
+wire [ 2:0] mem_we;
 wire        src_reg_is_rd;
-wire [4: 0] dest;
+wire        rj_eq_rd;
+wire        rj_lt_rd;
+wire        rj_ltu_rd;
+wire [ 4:0] dest;
 wire [31:0] rj_value;
 wire [31:0] rkd_value;
 wire [31:0] imm;
@@ -108,12 +111,22 @@ wire        inst_andi;
 wire        inst_ori;
 wire        inst_xori;
 wire        inst_ld_w;
+wire        inst_ld_h;
+wire        inst_ld_b;
+wire        inst_ld_hu;
+wire        inst_ld_bu;
 wire        inst_st_w;
+wire        inst_st_h;
+wire        inst_st_b;
 wire        inst_jirl;
 wire        inst_b;
 wire        inst_bl;
 wire        inst_beq;
 wire        inst_bne;
+wire        inst_blt;
+wire        inst_bge;
+wire        inst_bltu;
+wire        inst_bgeu;
 wire        inst_lu12i_w;
 wire        inst_pcaddu12i;
 wire        inst_mul_w;
@@ -202,12 +215,22 @@ assign inst_andi   = op_31_26_d[6'h00] & op_25_22_d[4'hd];
 assign inst_ori    = op_31_26_d[6'h00] & op_25_22_d[4'he];
 assign inst_xori   = op_31_26_d[6'h00] & op_25_22_d[4'hf];
 assign inst_ld_w   = op_31_26_d[6'h0a] & op_25_22_d[4'h2];
+assign inst_ld_h   = op_31_26_d[6'h0a] & op_25_22_d[4'h1];
+assign inst_ld_b   = op_31_26_d[6'h0a] & op_25_22_d[4'h0];
+assign inst_ld_hu  = op_31_26_d[6'h0a] & op_25_22_d[4'h9];
+assign inst_ld_bu  = op_31_26_d[6'h0a] & op_25_22_d[4'h8];
 assign inst_st_w   = op_31_26_d[6'h0a] & op_25_22_d[4'h6];
+assign inst_st_h   = op_31_26_d[6'h0a] & op_25_22_d[4'h5];
+assign inst_st_b   = op_31_26_d[6'h0a] & op_25_22_d[4'h4];
 assign inst_jirl   = op_31_26_d[6'h13];
 assign inst_b      = op_31_26_d[6'h14];
 assign inst_bl     = op_31_26_d[6'h15];
 assign inst_beq    = op_31_26_d[6'h16];
 assign inst_bne    = op_31_26_d[6'h17];
+assign inst_blt    = op_31_26_d[6'h18];
+assign inst_bge    = op_31_26_d[6'h19];
+assign inst_bltu   = op_31_26_d[6'h1a];
+assign inst_bgeu   = op_31_26_d[6'h1b];
 assign inst_lu12i_w= op_31_26_d[6'h05] & ~inst[25];
 assign inst_pcaddu12i = op_31_26_d[6'h07] & ~inst[25];
 assign inst_div_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h00];
@@ -215,21 +238,28 @@ assign inst_mod_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & o
 assign inst_div_wu = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h02];
 assign inst_mod_wu = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h03];
 
-assign need_ui5   =  inst_slli_w | inst_srli_w | inst_srai_w;
-assign need_si12  =  inst_addi_w | inst_ld_w | inst_st_w | inst_slti | inst_sltui;
-assign need_ui12  =  inst_andi | inst_ori | inst_xori;
-assign need_si16  =  inst_jirl | inst_beq | inst_bne;
-assign need_si20  =  inst_lu12i_w | inst_pcaddu12i;
-assign need_si26  =  inst_b | inst_bl;
-assign src2_is_4  =  inst_jirl | inst_bl;
+assign need_ui5   = inst_slli_w | inst_srli_w | inst_srai_w;
+assign need_si12  = inst_addi_w |
+                    inst_ld_w | inst_ld_h | inst_ld_b | inst_ld_hu | inst_ld_bu |
+                    inst_st_w | inst_st_h | inst_st_b |
+                    inst_slti | inst_sltui;
+assign need_ui12  = inst_andi | inst_ori | inst_xori;
+assign need_si16  = inst_jirl | inst_beq | inst_bne |
+                                inst_blt | inst_bge |
+                                inst_bltu | inst_bgeu;
+assign need_si20  = inst_lu12i_w | inst_pcaddu12i;
+assign need_si26  = inst_b | inst_bl;
+assign src2_is_4  = inst_jirl | inst_bl;
 
 assign br_offs = need_si26 ? {{ 4{i26[25]}}, i26[25:0], 2'b0} :
                              {{14{i16[15]}}, i16[15:0], 2'b0} ;
 
 assign jirl_offs = {{14{i16[15]}}, i16[15:0], 2'b0};
 
-assign src_reg_is_rd = inst_beq | inst_bne | inst_st_w;
+assign src_reg_is_rd = inst_beq | inst_bne | inst_blt | inst_bge | inst_bltu | inst_bgeu | inst_st_w | inst_st_h | inst_st_b;
 assign rj_eq_rd = (rj_value == rkd_value);
+assign rj_lt_rd = ($signed(rj_value) < $signed(rkd_value));
+assign rj_ltu_rd= (rj_value < rkd_value);
 
 assign dst_is_r1     = inst_bl;
 
@@ -262,8 +292,11 @@ assign rf2_raw_mem = ID_valid && possible_raw_mem && use_rkd && (rf_raddr2 == ME
 assign rf1_raw_wb  = ID_valid && possible_raw_wb  && use_rj  && (rf_raddr1 == WB_dest);
 assign rf2_raw_wb  = ID_valid && possible_raw_wb  && use_rkd && (rf_raddr2 == WB_dest);
 assign use_rj  = !inst_b && !inst_bl;
-assign use_rkd = inst_beq || inst_bne || inst_sub_w || inst_slt || inst_sltu
-                 || inst_nor || inst_and || inst_or || inst_xor || inst_st_w || inst_add_w
+assign use_rkd = inst_beq || inst_bne || inst_blt || inst_bge || inst_bltu || inst_bgeu
+                 || inst_sub_w || inst_slt || inst_sltu
+                 || inst_nor || inst_and || inst_or || inst_xor
+                 || inst_st_w || inst_st_h || inst_st_b
+                 || inst_add_w
                  || inst_sll_w || inst_srl_w || inst_sra_w
                  || inst_mul_w || inst_mulh_w || inst_mulh_wu
                  || inst_div_w || inst_mod_w || inst_div_wu || inst_mod_wu;
@@ -277,13 +310,20 @@ assign raw = EXU_raw || MEM_raw || WB_raw;
 ///////////////////////////////////////////////////////////////////////
 assign br_taken = (   inst_beq  &&  rj_eq_rd
                    || inst_bne  && !rj_eq_rd
+                   || inst_blt  &&  rj_lt_rd
+                   || inst_bge  && !rj_lt_rd
+                   || inst_bltu &&  rj_ltu_rd
+                   || inst_bgeu && !rj_ltu_rd
                    || inst_jirl
                    || inst_bl
                    || inst_b
                   ) && ID_valid;
 assign br_taken_cancel = !IDU_ready_go ? 1'b0 : br_taken; // ID_valid is used
-assign br_target = (inst_beq || inst_bne || inst_bl || inst_b) ? (pc + br_offs) :
-                                                   /*inst_jirl*/ (rj_value + jirl_offs);
+assign br_target = (inst_beq || inst_bne ||
+                    inst_blt || inst_bge ||
+                    inst_bltu || inst_bgeu ||
+                    inst_bl || inst_b) ? (pc + br_offs) :
+                           /*inst_jirl*/ (rj_value + jirl_offs);
 assign IDU_br_taken_cancel  = br_taken_cancel;
 assign IDU_br_taken  = br_taken;
 assign IDU_br_target = br_target;
@@ -303,14 +343,22 @@ assign src2_is_imm   = inst_slli_w |
                        inst_ori    |
                        inst_xori   |
                        inst_ld_w   |
+                       inst_ld_h   |
+                       inst_ld_b   |
+                       inst_ld_hu  |
+                       inst_ld_bu  |
                        inst_st_w   |
+                       inst_st_h   |
+                       inst_st_b   |
                        inst_lu12i_w|
                        inst_pcaddu12i|
                        inst_jirl   |
                        inst_bl     ;
 
-assign alu_op[ 0] = inst_add_w | inst_addi_w | inst_ld_w | inst_st_w
-                    | inst_jirl | inst_bl | inst_pcaddu12i;
+assign alu_op[ 0] = inst_add_w | inst_addi_w |
+                    inst_ld_w | inst_ld_h | inst_ld_b | inst_ld_hu | inst_ld_bu |
+                    inst_st_w | inst_st_h | inst_st_b |
+                    inst_jirl | inst_bl | inst_pcaddu12i;
 assign alu_op[ 1] = inst_sub_w;
 assign alu_op[ 2] = inst_slt | inst_slti;
 assign alu_op[ 3] = inst_sltu | inst_sltui;
@@ -342,7 +390,7 @@ assign rkd_value = rf2_raw_exu ? EXU_to_ID_forward
                  : rf2_raw_wb  ? WB_to_ID_forward  
                  : rf_rdata2;
 
-assign IFU_to_EX_ALU_signals = {
+assign IDU_to_EX_ALU_signals = {
     rj_value,      // [31:0]
     rkd_value,     // [63:32]
     imm,           // [95:64]
@@ -361,7 +409,7 @@ assign div_op[0] = inst_div_w;
 assign div_op[1] = inst_mod_w;
 assign div_op[2] = inst_div_wu;
 assign div_op[3] = inst_mod_wu;
-assign IFU_to_EX_div_signals = {
+assign IDU_to_EX_div_signals = {
     use_div,    // [4]
     div_op      // [3:0]
 };
@@ -372,17 +420,20 @@ assign IFU_to_EX_div_signals = {
 assign IDU_pc_to_EXU   = pc;
 assign IDU_inst_to_EXU = inst;
 
-assign res_from_mem  = inst_ld_w;
+assign res_from_mem  = {inst_ld_w, inst_ld_h, inst_ld_b, inst_ld_hu, inst_ld_bu};
 
-assign gr_we         = ~inst_st_w & ~inst_beq & ~inst_bne & ~inst_b;
-assign mem_we        = inst_st_w;
+assign gr_we         = ~(inst_st_w | inst_st_h | inst_st_b |
+                         inst_beq | inst_bne |
+                         inst_blt | inst_bge |
+                         inst_bltu | inst_bgeu | inst_b);
+assign mem_we        = {inst_st_w, inst_st_h, inst_st_b};
 assign dest          = dst_is_r1 ? 5'd1 : rd;
 
-assign IFU_to_EX_pass_signals = {
-    res_from_mem,   // [0]
-    gr_we,          // [1]
-    mem_we,         // [2]
-    dest            // [7:3]
+assign IDU_to_EX_pass_signals = {
+    res_from_mem,   // [4:0]
+    gr_we,          // [5]
+    mem_we,         // [8:6]
+    dest            // [13:9]
 };
 
 ////////////////////////////////////////////////////////////////////////
