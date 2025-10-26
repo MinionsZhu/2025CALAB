@@ -39,7 +39,7 @@ reg         EX_valid;
 reg [ 31:0] inst_reg;
 reg [ 31:0] pc_reg;
 reg [112:0] alu_signals_reg;
-reg  [ 9:0] pass_signals_reg;
+reg  [14:0] pass_signals_reg;
 reg  [ 4:0] div_signals_reg;
 reg signed_div_dividend_tvalid_reg;
 reg signed_div_divisor_tvalid_reg;

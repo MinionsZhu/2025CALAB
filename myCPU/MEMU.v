@@ -90,17 +90,22 @@ assign ex_result = ex_result_reg;
 assign signals_pass = signals_pass_reg;
 assign {res_from_mem, mem_offsets, gr_we, dest} = signals_pass;
 
-assign shift_rdata = {24'b0, data_sram_rdata} >> {mem_offsets, 3'b0};
+assign shift_rdata = mem_offsets == 2'b00 ?         data_sram_rdata :
+                     mem_offsets == 2'b01 ? { 8'b0, data_sram_rdata[31: 8]}:
+                     mem_offsets == 2'b10 ? {16'b0, data_sram_rdata[31:16]}:
+                                            {24'b0, data_sram_rdata[31:24]};
 
 assign mem_result[ 7: 0] = shift_rdata[ 7: 0];
 
 assign mem_result[15: 8] = ({8{ res_from_mem[2]}}                    & {8{shift_rdata[ 7]}} )|
-                           ({8{ res_from_mem[4]}}                    &  8'b0                )|
-                           ({8{~res_from_mem[2] & ~res_from_mem[4]}} &    shift_rdata[15: 8]);
+                           ({8{ res_from_mem[0]}}                    &  8'b0                )|
+                           ({8{~res_from_mem[2] & ~res_from_mem[0]}} &    shift_rdata[15: 8]);
 
 assign mem_result[31:16] = ({16{res_from_mem[2]}} & {16{shift_rdata[ 7]}} )|
-                           ({16{res_from_mem[1]}} & {16{shift_rdata[15]}} )|
-                           ({16{res_from_mem[0]}} &     shift_rdata[31:16]);
+                           ({16{res_from_mem[3]}} & {16{shift_rdata[15]}} )|
+                           ({16{res_from_mem[4]}} &     shift_rdata[31:16]);
+
+// 4 = ld.w, 3 = ld.h, 2 = ld.b, 1 = ld.hu, 0 = ld.bu
 
 assign MEM_pc_to_WB = pc;
 assign MEM_inst_to_WB = inst;
