@@ -10,21 +10,21 @@ module EXU(
     output wire        EXU_to_MEM_valid,
 
     // data from IDU
-    input  wire  [31:0] IDU_pc_to_EXU,
-    input  wire  [31:0] IDU_inst_to_EXU,
-    input  wire [112:0] IDU_to_EX_ALU_signals,
-    input  wire   [7:0] IDU_to_EX_pass_signals,
-    input  wire   [4:0] IDU_to_EX_div_signals,
+    input  wire [31:0] IDU_pc_to_EXU,
+    input  wire [31:0] IDU_inst_to_EXU,
+    input  wire[112:0] IDU_to_EX_ALU_signals,
+    input  wire [13:0] IDU_to_EX_pass_signals,
+    input  wire [ 4:0] IDU_to_EX_div_signals,
     
     // to MEM
     output wire [31:0] EXU_pc_to_MEM,
     output wire [31:0] EXU_inst_to_MEM,
     output wire [31:0] EXU_result_to_MEM,
-    output wire  [6:0] EXU_signals_pass_to_MEM,
+    output wire [12:0] EXU_signals_pass_to_MEM,
 
     // to IDU
     output wire        EXU_to_IDU_gr_we,
-    output wire  [4:0] EXU_to_IDU_dest,
+    output wire [ 4:0] EXU_to_IDU_dest,
     output wire        EXU_to_IDU_valid,
     output wire [31:0] EXU_to_IDU_forward,
     output wire        EXU_current_is_ld,
@@ -39,7 +39,7 @@ reg         EX_valid;
 reg [ 31:0] inst_reg;
 reg [ 31:0] pc_reg;
 reg [112:0] alu_signals_reg;
-reg  [ 7:0] pass_signals_reg;
+reg  [14:0] pass_signals_reg;
 reg  [ 4:0] div_signals_reg;
 reg signed_div_dividend_tvalid_reg;
 reg signed_div_divisor_tvalid_reg;
@@ -55,9 +55,10 @@ wire [31:0] rkd_value;
 wire [31:0] imm;
 wire        src1_is_pc;
 wire        src2_is_imm;
-wire        res_from_mem;
+wire [ 4:0] res_from_mem;
+wire [ 1:0] mem_offsets;
 wire        gr_we;
-wire        mem_we;
+wire [ 2:0] mem_we; // 3 bits One-hot code for byte, half-word, word
 wire [ 4:0] dest;
 wire        use_div;
 wire [ 3:0] div_op;
@@ -117,7 +118,7 @@ always @(posedge clk) begin
 end
 always @(posedge clk) begin
     if (reset) begin
-        pass_signals_reg <= 8'b0;
+        pass_signals_reg <= 14'b0;
     end
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
         pass_signals_reg <= IDU_to_EX_pass_signals;
@@ -237,20 +238,29 @@ assign {res_from_mem, gr_we, mem_we, dest} = pass_signals_reg;
 assign EXU_pc_to_MEM = pc;
 assign EXU_inst_to_MEM = inst;
 assign EXU_result_to_MEM = EXU_result;
-assign EXU_signals_pass_to_MEM = {res_from_mem, gr_we, dest};
+assign EXU_signals_pass_to_MEM = {res_from_mem, mem_offsets, gr_we, dest};
+assign mem_offsets = alu_result[1:0];
 
 // to data sram interface
 assign data_sram_en = 1'b1;
-assign data_sram_we = (mem_we && EX_valid) ? 4'b1111 : 4'b0;
-assign data_sram_addr = alu_result;
-assign data_sram_wdata = rkd_value;
+assign data_sram_we = ~EX_valid ? 4'b0 :
+                      mem_we[2] ? 4'b1111 :
+                      mem_we[1] ? (mem_offsets[1]       ? 4'b1100 : 4'b0011):
+                      mem_we[0] ? (mem_offsets == 2'b00 ? 4'b0001 :
+                                   mem_offsets == 2'b01 ? 4'b0010 :
+                                   mem_offsets == 2'b10 ? 4'b0100 :
+                                                          4'b1000): 4'b0;
+assign data_sram_addr = {alu_result[31:2], 2'b00};  // word aligned address(not sure...)
+assign data_sram_wdata = mem_we[2] ?    rkd_value :
+                         mem_we[1] ? {2{rkd_value[15:0]}} :
+                         mem_we[0] ? {4{rkd_value[ 7:0]}} : 32'b0;
 
 // to IDU
 assign EXU_to_IDU_gr_we = gr_we;
 assign EXU_to_IDU_dest  = dest;
 assign EXU_to_IDU_valid = EX_valid;
 assign EXU_to_IDU_forward = EXU_result;
-assign EXU_current_is_ld = res_from_mem && EX_valid;
+assign EXU_current_is_ld = |res_from_mem && EX_valid;
 
 // EX status
 always @(posedge clk) begin
