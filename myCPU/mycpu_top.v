@@ -323,6 +323,7 @@ regfile u_regfile(
 csr_regs u_csr_regs(
     .clk            (clk            ),
     .reset          (reset          ),
+    .csr_num        (csr_num        ),
     .csr_re         (csr_re         ),
     .csr_we         (csr_we         ),
     .csr_wmask      (csr_wmask      ),

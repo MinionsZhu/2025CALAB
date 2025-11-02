@@ -316,7 +316,7 @@ assign data_sram_wdata = mem_we[2] ?    rkd_value :
 // to IDU
 assign EXU_to_IDU_gr_we = gr_we;
 assign EXU_to_IDU_dest  = dest;
-assign EXU_to_IDU_valid = EX_valid && !has_int && !wb_ex && !EXU_ertn_flush;
+assign EXU_to_IDU_valid = EX_valid;
 assign EXU_to_IDU_forward = EXU_result;
 assign EXU_current_is_ld = |res_from_mem && EX_valid;
 
@@ -325,15 +325,12 @@ always @(posedge clk) begin
     if (reset) begin
         EX_valid <= 1'b0;
     end
-    else if (has_int || wb_ex || EXU_ertn_flush) begin
-        EX_valid <= 1'b0;
-    end
     else if (EXU_allow_in) begin
         EX_valid <= IDU_to_EXU_valid;
     end
 end
 assign EXU_ready_go = use_div ? (signed_div_dout_valid | unsigned_div_dout_valid) : 1'b1;
-assign EXU_to_MEM_valid = EX_valid && EXU_ready_go && !has_int && !wb_ex && !EXU_ertn_flush;
+assign EXU_to_MEM_valid = EX_valid && EXU_ready_go;
 assign EXU_allow_in = !EX_valid || (EXU_ready_go && MEM_allow_in);
 
 endmodule

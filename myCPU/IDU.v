@@ -506,9 +506,6 @@ always @(posedge clk ) begin
     if (reset) begin
         ID_valid <= 1'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
-        ID_valid <= 1'b0;
-    end
     else if(br_taken_cancel)begin
         ID_valid <= 1'b0;
     end

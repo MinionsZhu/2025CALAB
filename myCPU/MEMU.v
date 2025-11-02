@@ -173,15 +173,12 @@ always @(posedge clk) begin
     if (reset) begin
         MEM_valid <= 1'b0;
     end
-    else if (wb_ex || has_int || ertn_flush) begin
-        MEM_valid <= 1'b0;
-    end
     else if (MEM_allow_in) begin
         MEM_valid <= EXU_to_MEM_valid;
     end
 end
 assign MEM_ready_go = 1'b1;
-assign MEM_to_WB_valid = MEM_valid && MEM_ready_go && !wb_ex && !has_int && !ertn_flush;
+assign MEM_to_WB_valid = MEM_valid && MEM_ready_go;
 assign MEM_allow_in = !MEM_valid || (MEM_ready_go && WB_allow_in);
 
 endmodule
