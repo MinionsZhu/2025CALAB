@@ -1,6 +1,10 @@
 module EXU(
     input  wire        clk,
     input  wire        reset,
+    // ie
+    input  wire        wb_ex,
+    input  wire        ertn_flush,
+    input  wire        has_int,
     // handshaking signals with IDU
     input  wire        IDU_to_EXU_valid,
     output wire        EXU_allow_in,
@@ -10,6 +14,7 @@ module EXU(
     output wire        EXU_to_MEM_valid,
 
     // data from IDU
+    input  wire [64:0] IDU_to_EXU_csr_signals,
     input  wire [31:0] IDU_pc_to_EXU,
     input  wire [31:0] IDU_inst_to_EXU,
     input  wire[112:0] IDU_to_EX_ALU_signals,
@@ -17,12 +22,17 @@ module EXU(
     input  wire [ 4:0] IDU_to_EX_div_signals,
     
     // to MEM
+    output wire [96:0] EXU_csr_signals_to_MEM,
     output wire [31:0] EXU_pc_to_MEM,
     output wire [31:0] EXU_inst_to_MEM,
     output wire [31:0] EXU_result_to_MEM,
     output wire [12:0] EXU_signals_pass_to_MEM,
 
+    // data from MEM
+    input  wire        MEM_has_int,
+
     // to IDU
+    output wire        EXU_to_IDU_csr,
     output wire        EXU_to_IDU_gr_we,
     output wire [ 4:0] EXU_to_IDU_dest,
     output wire        EXU_to_IDU_valid,
@@ -45,6 +55,7 @@ reg signed_div_dividend_tvalid_reg;
 reg signed_div_divisor_tvalid_reg;
 reg unsigned_div_dividend_tvalid_reg;
 reg unsigned_div_divisor_tvalid_reg;
+reg [64:0] csr_signals_reg;
 
 wire [31:0] pc;
 wire [31:0] inst;
@@ -90,10 +101,33 @@ wire [31:0] unsigned_div_remainder;
 wire [31:0] unsigned_div_quotient;
 wire [31:0] final_div_result;
 
+wire        csr;
+wire        csr_we;
+wire [15:0] csr_num;
+wire [31:0] csr_wmask;
+wire        syscall;
+wire [14:0] syscall_code;
+wire        EXU_ertn_flush;
+wire [31:0] csr_wvalue;
+
 wire [31:0] EXU_result;
+always @(posedge clk) begin
+    if (reset) begin
+        csr_signals_reg <= 65'b0;
+    end
+    else if(ertn_flush || has_int || wb_ex) begin
+        csr_signals_reg <= 65'b0;
+    end
+    else if (EXU_allow_in && IDU_to_EXU_valid) begin
+        csr_signals_reg <= IDU_to_EXU_csr_signals;
+    end
+end
 
 always @(posedge clk) begin
     if (reset) begin
+        inst_reg <= 32'b0;
+    end
+    else if(ertn_flush || has_int || wb_ex) begin
         inst_reg <= 32'b0;
     end
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
@@ -104,12 +138,18 @@ always @(posedge clk) begin
     if (reset) begin
         pc_reg <= 32'b0;
     end
+    else if(ertn_flush || has_int || wb_ex) begin
+        pc_reg <= 32'b0;
+    end
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
         pc_reg <= IDU_pc_to_EXU;
     end
 end
 always @(posedge clk) begin
     if (reset) begin
+        alu_signals_reg <= 113'b0;
+    end
+    else if (ertn_flush || has_int || wb_ex) begin
         alu_signals_reg <= 113'b0;
     end
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
@@ -120,12 +160,18 @@ always @(posedge clk) begin
     if (reset) begin
         pass_signals_reg <= 14'b0;
     end
+    else if(ertn_flush || has_int || wb_ex) begin
+        pass_signals_reg <= 14'b0;
+    end
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
         pass_signals_reg <= IDU_to_EX_pass_signals;
     end
 end
 always @(posedge clk) begin
     if (reset) begin
+        div_signals_reg <= 5'b0;
+    end
+    else if(ertn_flush || has_int || wb_ex) begin
         div_signals_reg <= 5'b0;
     end
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
@@ -241,9 +287,21 @@ assign EXU_result_to_MEM = EXU_result;
 assign EXU_signals_pass_to_MEM = {res_from_mem, mem_offsets, gr_we, dest};
 assign mem_offsets = alu_result[1:0];
 
+assign {csr, csr_we, csr_num, csr_wmask, syscall, syscall_code, EXU_ertn_flush} = csr_signals_reg;
+assign csr_wvalue = rkd_value;
+assign EXU_to_IDU_csr = csr;
+assign EXU_csr_signals_to_MEM = {csr,       // [0]
+                         csr_we,    // [1]
+                         csr_num,       // [15:2]
+                         csr_wmask,     // [47:16]
+                         csr_wvalue,    // [79:48]
+                         syscall,       // [80]
+                         syscall_code,  // [95:81]
+                         EXU_ertn_flush // [96]
+                        };
 // to data sram interface
 assign data_sram_en = 1'b1;
-assign data_sram_we = ~EX_valid ? 4'b0 :
+assign data_sram_we = (~EX_valid || has_int || wb_ex || EXU_ertn_flush || MEM_has_int) ? 4'b0 :
                       mem_we[2] ? 4'b1111 :
                       mem_we[1] ? (mem_offsets[1]       ? 4'b1100 : 4'b0011):
                       mem_we[0] ? (mem_offsets == 2'b00 ? 4'b0001 :
@@ -258,7 +316,7 @@ assign data_sram_wdata = mem_we[2] ?    rkd_value :
 // to IDU
 assign EXU_to_IDU_gr_we = gr_we;
 assign EXU_to_IDU_dest  = dest;
-assign EXU_to_IDU_valid = EX_valid;
+assign EXU_to_IDU_valid = EX_valid && !has_int && !wb_ex && !EXU_ertn_flush;
 assign EXU_to_IDU_forward = EXU_result;
 assign EXU_current_is_ld = |res_from_mem && EX_valid;
 
@@ -267,12 +325,17 @@ always @(posedge clk) begin
     if (reset) begin
         EX_valid <= 1'b0;
     end
+    else if (has_int || wb_ex || EXU_ertn_flush) begin
+        EX_valid <= 1'b0;
+    end
     else if (EXU_allow_in) begin
         EX_valid <= IDU_to_EXU_valid;
     end
 end
 assign EXU_ready_go = use_div ? (signed_div_dout_valid | unsigned_div_dout_valid) : 1'b1;
-assign EXU_to_MEM_valid = EX_valid && EXU_ready_go;
+assign EXU_to_MEM_valid = EX_valid && EXU_ready_go && !has_int && !wb_ex && !EXU_ertn_flush;
 assign EXU_allow_in = !EX_valid || (EXU_ready_go && MEM_allow_in);
 
 endmodule
+
+// valid?

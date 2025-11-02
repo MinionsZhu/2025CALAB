@@ -1,6 +1,14 @@
 module IFU(
     input  wire        clk,
     input  wire        reset,
+    // ie
+    input  wire        wb_ex,
+    input  wire        ertn_flush,
+    input  wire        has_int,
+    // pc from csr
+    input  wire [31:0] ex_entry,
+    input  wire [31:0] ertn_pc,
+
     // inst sram interface
     output wire        inst_sram_en,
     output wire [ 3:0] inst_sram_we,
@@ -55,7 +63,10 @@ module IFU(
     
     // pc register & output to IDU
     assign seq_pc = pc + 4;
-    assign nextpc = br_taken ? br_target : seq_pc;
+    assign nextpc = (has_int || wb_ex) ? ex_entry 
+                  : ertn_flush ? ertn_pc 
+                  : br_taken ? br_target 
+                  : seq_pc;
     always @(posedge clk) begin
         if (reset) begin
             pc <= 32'h1bfffffc;

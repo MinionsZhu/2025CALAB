@@ -9,6 +9,7 @@ module WBU(
     output wire        WB_to_out_valid,
 
     // data from MEM
+    input  wire [96:0] MEM_csr_signals_to_WB,
     input  wire [31:0] MEM_pc_to_WB,
     input  wire [31:0] MEM_inst_to_WB,
     input  wire [31:0] MEM_result_to_WB,
@@ -20,6 +21,7 @@ module WBU(
     output wire        rf_we,
 
     // to IDU
+    output wire        WB_to_IDU_csr,
     output wire        WB_to_IDU_gr_we,
     output wire [ 4:0] WB_to_IDU_dest,
     output wire        WB_to_IDU_valid,
@@ -29,8 +31,23 @@ module WBU(
     output wire [31:0] debug_pc,
     output wire [ 3:0] debug_rf_we,
     output wire [ 4:0] debug_rf_wnum,
-    output wire [31:0] debug_rf_wdata
+    output wire [31:0] debug_rf_wdata,
+
+    // csr interface
+    output wire        csr_re,
+    output wire        csr_we,
+    output wire [13:0] csr_num,
+    input  wire [31:0] csr_rvalue,
+    output wire [31:0] csr_wmask,
+    output wire [31:0] csr_wvalue,
+    output wire [31:0] wb_pc,
+    output wire        ertn_flush,
+    output wire        wb_ex,
+    output wire [5:0]  wb_ecode,
+    output wire [8:0]  wb_esubcode
 );
+reg [96:0] csr_signals_reg;
+
 reg WB_valid;
 reg [31:0] inst_reg;
 reg [31:0] pc_reg;
@@ -43,6 +60,24 @@ wire [31:0] result;
 wire [ 5:0] signals_pass;
 wire        gr_we;
 wire [ 4:0] dest;
+
+wire WBU_csr;
+wire WBU_csr_we;
+wire [13:0] WBU_csr_num;
+wire [31:0] WBU_csr_wmask;
+wire [31:0] WBU_csr_wvalue;
+wire WBU_syscall;
+wire [14:0] WBU_syscall_code;
+wire WBU_ertn_flush;
+
+always @(posedge clk) begin
+    if (reset) begin
+        csr_signals_reg <= 97'b0;
+    end
+    else if (WB_allow_in && MEM_to_WB_valid) begin
+        csr_signals_reg <= MEM_csr_signals_to_WB;
+    end
+end
 
 always @(posedge clk) begin
     if (reset) begin
@@ -83,7 +118,7 @@ assign signals_pass = signals_pass_reg;
 assign gr_we = signals_pass[5];
 assign dest = signals_pass[4:0];
 assign rf_waddr = dest;
-assign rf_wdata = result;
+assign rf_wdata = WBU_csr ? csr_rvalue : result;
 assign rf_we = gr_we & WB_valid;
 
 // to IDU
@@ -101,6 +136,20 @@ always @(posedge clk ) begin
         WB_valid <= MEM_to_WB_valid;
     end
 end
+
+// csr signals
+assign {WBU_csr, WBU_csr_we, WBU_csr_num, WBU_csr_wmask, WBU_csr_wvalue, WBU_syscall, WBU_syscall_code, WBU_ertn_flush} = csr_signals_reg;
+assign csr_re = 1'b1;
+assign csr_we = WBU_csr_we;
+assign csr_num = WBU_csr_num;
+assign csr_wmask = WBU_csr_wmask;
+assign csr_wvalue = WBU_csr_wvalue;
+assign wb_pc = pc;
+assign ertn_flush = WBU_ertn_flush;
+assign wb_ex = WBU_syscall;
+assign wb_ecode = WBU_syscall ? 6'hb : 6'h0;
+assign wb_esubcode = 9'h0;
+assign WB_to_IDU_csr = WBU_csr;
 
 assign WB_ready_go      = 1'b1;
 assign WB_to_out_valid  = WB_valid && WB_ready_go;

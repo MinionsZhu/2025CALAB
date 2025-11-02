@@ -1,6 +1,9 @@
 module MEMU(
     input  wire        clk,
     input  wire        reset,
+    input  wire        has_int,
+    input  wire        wb_ex,
+    input  wire        ertn_flush,
     // handshaking signals with EXU
     input  wire        EXU_to_MEM_valid,
     output wire        MEM_allow_in,
@@ -10,6 +13,7 @@ module MEMU(
     output wire        MEM_to_WB_valid,
 
     // data from EXU
+    input  wire [96:0] EXU_csr_signals_to_MEM,
     input  wire [31:0] EXU_pc_to_MEM,
     input  wire [31:0] EXU_inst_to_MEM,
     input  wire [31:0] EXU_result_to_MEM,
@@ -19,12 +23,17 @@ module MEMU(
     input  wire [31:0] data_sram_rdata,
 
     // to IDU
+    output wire        MEM_to_IDU_csr,
     output wire        MEM_to_IDU_gr_we,
     output wire [ 4:0] MEM_to_IDU_dest,
     output wire        MEM_to_IDU_valid,
     output wire [31:0] MEM_to_IDU_forward,
 
+    // data to EXU
+    output wire        MEM_has_int,
+
     // data to WB
+    output wire [96:0] MEM_csr_signals_to_WB,
     output wire [31:0] MEM_pc_to_WB,
     output wire [31:0] MEM_inst_to_WB,
     output wire [31:0] MEM_result_to_WB,
@@ -36,6 +45,8 @@ reg [31:0] inst_reg;
 reg [31:0] pc_reg;
 reg [31:0] ex_result_reg;
 reg [12:0] signals_pass_reg;
+
+reg [96:0] csr_signals_reg;
 
 wire [31:0] pc;
 wire [31:0] inst;
@@ -49,8 +60,32 @@ wire [31:0] ex_result;
 wire [31:0] shift_rdata;
 wire [31:0] mem_result;
 
+wire        csr;
+wire        csr_we;
+wire [13:0] csr_num;
+wire [31:0] csr_wmask;
+wire [31:0] csr_wvalue;
+wire        syscall;
+wire [14:0] syscall_code;
+wire        MEM_ertn_flush;
+
 always @(posedge clk) begin
     if (reset) begin
+        csr_signals_reg <= 97'b0;
+    end
+    else if (wb_ex || has_int || ertn_flush) begin
+        csr_signals_reg <= 97'b0;
+    end
+    else if (MEM_allow_in && EXU_to_MEM_valid) begin
+        csr_signals_reg <= EXU_csr_signals_to_MEM;
+    end
+end
+
+always @(posedge clk) begin
+    if (reset) begin
+        inst_reg <= 32'b0;
+    end
+    else if (wb_ex || has_int || ertn_flush) begin
         inst_reg <= 32'b0;
     end
     else if (MEM_allow_in && EXU_to_MEM_valid) begin
@@ -62,6 +97,9 @@ always @(posedge clk) begin
     if (reset) begin
         pc_reg <= 32'b0;
     end
+    else if (wb_ex || has_int || ertn_flush) begin
+        pc_reg <= 32'b0;
+    end
     else if (MEM_allow_in && EXU_to_MEM_valid) begin
         pc_reg <= EXU_pc_to_MEM;
     end
@@ -69,6 +107,9 @@ end
 
 always @(posedge clk) begin
     if (reset) begin
+        ex_result_reg <= 32'b0;
+    end
+    else if (wb_ex || has_int || ertn_flush) begin
         ex_result_reg <= 32'b0;
     end
     else if (MEM_allow_in && EXU_to_MEM_valid) begin
@@ -80,10 +121,15 @@ always @(posedge clk) begin
     if (reset) begin
         signals_pass_reg <= 13'b0;
     end
+    else if (wb_ex || has_int || ertn_flush) begin
+        signals_pass_reg <= 13'b0;
+    end
     else if (MEM_allow_in && EXU_to_MEM_valid) begin
         signals_pass_reg <= EXU_signals_pass_to_MEM;
     end
 end
+assign {csr, csr_we, csr_num, csr_wmask, syscall, syscall_code, MEM_ertn_flush} = csr_signals_reg;
+
 assign pc = pc_reg;
 assign inst = inst_reg;
 assign ex_result = ex_result_reg;
@@ -110,10 +156,13 @@ assign mem_result[31:16] = ({16{res_from_mem[2]}} & {16{shift_rdata[ 7]}} )|
 assign MEM_pc_to_WB = pc;
 assign MEM_inst_to_WB = inst;
 assign MEM_result_to_WB = |res_from_mem ? mem_result : ex_result;
+assign MEM_csr_signals_to_WB = csr_signals_reg;
 
 assign MEM_signals_pass_to_WB = {gr_we, dest};
 
+assign MEM_has_int = syscall;
 // to IDU
+assign MEM_to_IDU_csr   = csr;
 assign MEM_to_IDU_gr_we = gr_we;
 assign MEM_to_IDU_dest  = dest;
 assign MEM_to_IDU_valid = MEM_valid;
@@ -124,12 +173,15 @@ always @(posedge clk) begin
     if (reset) begin
         MEM_valid <= 1'b0;
     end
+    else if (wb_ex || has_int || ertn_flush) begin
+        MEM_valid <= 1'b0;
+    end
     else if (MEM_allow_in) begin
         MEM_valid <= EXU_to_MEM_valid;
     end
 end
 assign MEM_ready_go = 1'b1;
-assign MEM_to_WB_valid = MEM_valid && MEM_ready_go;
+assign MEM_to_WB_valid = MEM_valid && MEM_ready_go && !wb_ex && !has_int && !ertn_flush;
 assign MEM_allow_in = !MEM_valid || (MEM_ready_go && WB_allow_in);
 
 endmodule
