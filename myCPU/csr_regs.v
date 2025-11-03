@@ -121,7 +121,7 @@ module csr_regs (
         if(timer_cnt[31:0] == 32'b0) begin
             csr_estat_is[11] <= 1'b1;
         end
-        else if (csr_we && (csr_num == `CSR_TICLR) && csr_wmask[`CSR_TICLR] && csr_wvalue[`CSR_TICLR]) begin
+        else if (csr_we && (csr_num == `CSR_TICLR) && csr_wmask[`CSR_TICLR_CLR] && csr_wvalue[`CSR_TICLR_CLR]) begin
             csr_estat_is[11] <= 1'b0;
         end
 

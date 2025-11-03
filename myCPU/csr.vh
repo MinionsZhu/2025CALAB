@@ -52,3 +52,6 @@
 `define CSR_TCFG_EN 0:0
 `define CSR_TCFG_PERIODIC 1:1
 `define CSR_TCFG_INITVAL 31:2
+
+// BITS in TICLR
+`define CSR_TICLR_CLR 0:0

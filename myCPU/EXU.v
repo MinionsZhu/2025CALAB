@@ -103,7 +103,7 @@ wire [31:0] final_div_result;
 
 wire        csr;
 wire        csr_we;
-wire [15:0] csr_num;
+wire [13:0] csr_num;
 wire [31:0] csr_wmask;
 wire        syscall;
 wire [14:0] syscall_code;

@@ -153,12 +153,12 @@ assign mem_result[31:16] = ({16{res_from_mem[2]}} & {16{shift_rdata[ 7]}} )|
 
 // 4 = ld.w, 3 = ld.h, 2 = ld.b, 1 = ld.hu, 0 = ld.bu
 
-assign MEM_pc_to_WB = pc;
-assign MEM_inst_to_WB = inst;
-assign MEM_result_to_WB = |res_from_mem ? mem_result : ex_result;
-assign MEM_csr_signals_to_WB = csr_signals_reg;
+assign MEM_pc_to_WB = pc &{32{!(wb_ex || has_int || ertn_flush)}};
+assign MEM_inst_to_WB = inst&{32{!(wb_ex || has_int || ertn_flush)}};
+assign MEM_result_to_WB = (wb_ex || has_int || ertn_flush) ? 32'b0 : (res_from_mem ? mem_result : ex_result);
+assign MEM_csr_signals_to_WB = csr_signals_reg & {97{!(wb_ex || has_int || ertn_flush)}};
 
-assign MEM_signals_pass_to_WB = {gr_we, dest};
+assign MEM_signals_pass_to_WB = {gr_we, dest} & {6{!(wb_ex || has_int || ertn_flush)}};
 
 assign MEM_has_int = syscall;
 // to IDU

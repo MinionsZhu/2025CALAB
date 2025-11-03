@@ -62,7 +62,7 @@ IFU u_IFU(
     .has_int        (has_int        ),
     // pc from csr
     .ex_entry       (ex_entry       ),
-    .ertn_pc        (wb_pc          ),
+    .ertn_pc        (ertn_pc        ),
     // inst sram interface
     .inst_sram_en   (inst_sram_en   ),
     .inst_sram_we   (inst_sram_we   ),
@@ -329,7 +329,7 @@ csr_regs u_csr_regs(
     .csr_wmask      (csr_wmask      ),
     .csr_rvalue     (csr_rvalue     ),
     .csr_wvalue     (csr_wvalue     ),
-    .ertn_pc       (ertn_pc       ),
+    .ertn_pc        (ertn_pc        ),
     .ex_entry       (ex_entry       ),
     .wb_ex          (wb_ex          ),
     .wb_pc          (wb_pc          ),
