@@ -48,6 +48,9 @@
 `define CSR_SAVE2_DATA 31:0
 `define CSR_SAVE3_DATA 31:0
 
+// BITS in TID
+`define CSR_TID_TID 31:0
+
 // BITS in TCFG
 `define CSR_TCFG_EN 0:0
 `define CSR_TCFG_PERIODIC 1:1

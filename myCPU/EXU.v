@@ -1,3 +1,4 @@
+`include "ecodes.vh"
 module EXU(
     input  wire        clk,
     input  wire        reset,
@@ -14,15 +15,15 @@ module EXU(
     output wire        EXU_to_MEM_valid,
 
     // data from IDU
-    input  wire [64:0] IDU_to_EXU_csr_signals,
+    input  wire [70:0] IDU_to_EXU_csr_signals,
     input  wire [31:0] IDU_pc_to_EXU,
     input  wire [31:0] IDU_inst_to_EXU,
     input  wire[112:0] IDU_to_EX_ALU_signals,
-    input  wire [13:0] IDU_to_EX_pass_signals,
+    input  wire [15:0] IDU_to_EX_pass_signals,
     input  wire [ 4:0] IDU_to_EX_div_signals,
     
     // to MEM
-    output wire [96:0] EXU_csr_signals_to_MEM,
+    output wire[102:0] EXU_csr_signals_to_MEM,
     output wire [31:0] EXU_pc_to_MEM,
     output wire [31:0] EXU_inst_to_MEM,
     output wire [31:0] EXU_result_to_MEM,
@@ -49,13 +50,18 @@ reg         EX_valid;
 reg [ 31:0] inst_reg;
 reg [ 31:0] pc_reg;
 reg [112:0] alu_signals_reg;
-reg  [14:0] pass_signals_reg;
-reg  [ 4:0] div_signals_reg;
-reg signed_div_dividend_tvalid_reg;
-reg signed_div_divisor_tvalid_reg;
-reg unsigned_div_dividend_tvalid_reg;
-reg unsigned_div_divisor_tvalid_reg;
-reg [64:0] csr_signals_reg;
+reg [ 15:0] pass_signals_reg;
+reg [  4:0] div_signals_reg;
+reg         signed_div_dividend_tvalid_reg;
+reg         signed_div_divisor_tvalid_reg;
+reg         unsigned_div_dividend_tvalid_reg;
+reg         unsigned_div_divisor_tvalid_reg;
+reg [ 70:0] csr_signals_reg;
+reg         ertn_lock_reg;
+
+reg [ 63:0] stable_counter;
+wire        inst_rdcntvl_w;
+wire        inst_rdcntvh_w;
 
 wire [31:0] pc;
 wire [31:0] inst;
@@ -105,7 +111,10 @@ wire        csr;
 wire        csr_we;
 wire [13:0] csr_num;
 wire [31:0] csr_wmask;
-wire        syscall;
+wire        exception;
+wire        isale;
+wire [ 5:0] ecode;
+wire [ 5:0] newecode;       // add ALE exception
 wire [14:0] syscall_code;
 wire        EXU_ertn_flush;
 wire [31:0] csr_wvalue;
@@ -113,10 +122,10 @@ wire [31:0] csr_wvalue;
 wire [31:0] EXU_result;
 always @(posedge clk) begin
     if (reset) begin
-        csr_signals_reg <= 65'b0;
+        csr_signals_reg <= 71'b0;
     end
     else if(ertn_flush || has_int || wb_ex) begin
-        csr_signals_reg <= 65'b0;
+        csr_signals_reg <= 71'b0;
     end
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
         csr_signals_reg <= IDU_to_EXU_csr_signals;
@@ -158,10 +167,10 @@ always @(posedge clk) begin
 end
 always @(posedge clk) begin
     if (reset) begin
-        pass_signals_reg <= 14'b0;
+        pass_signals_reg <= 16'b0;
     end
     else if(ertn_flush || has_int || wb_ex) begin
-        pass_signals_reg <= 14'b0;
+        pass_signals_reg <= 16'b0;
     end
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
         pass_signals_reg <= IDU_to_EX_pass_signals;
@@ -223,6 +232,26 @@ always @(posedge clk) begin
         unsigned_div_divisor_tvalid_reg <= 1'b0;
     end
 end
+always @(posedge clk) begin
+    if (reset) begin
+        stable_counter <= 64'b0;
+    end
+    else begin
+        stable_counter <= stable_counter + 1'b1;
+    end
+end
+always @(posedge clk) begin
+    if (reset) begin
+        ertn_lock_reg <= 1'b0;
+    end
+    else if (EXU_ertn_flush) begin
+        ertn_lock_reg <= 1'b1;
+    end
+    else if (ertn_flush) begin
+        ertn_lock_reg <= 1'b0;
+    end
+end
+
 assign alu_src1 = src1_is_pc ? pc : rj_value;
 assign alu_src2 = src2_is_imm ? imm : rkd_value;
 
@@ -276,42 +305,49 @@ assign final_div_result = (div_op[0]) ? signed_div_quotient :
                           (div_op[2]) ? unsigned_div_quotient :
                           (div_op[3]) ? unsigned_div_remainder : 32'b0;
 
-assign EXU_result = use_div ? final_div_result : alu_result;
+assign EXU_result = use_div ? final_div_result :
+                    inst_rdcntvh_w ? stable_counter[63:32] :
+                    inst_rdcntvl_w ? stable_counter[31: 0] : alu_result;
 assign pc = pc_reg;
 assign inst = inst_reg;
 assign {rj_value, rkd_value, imm, alu_op, src1_is_pc, src2_is_imm} = alu_signals_reg;
-assign {res_from_mem, gr_we, mem_we, dest} = pass_signals_reg;
+assign {res_from_mem, gr_we, mem_we, dest, inst_rdcntvh_w, inst_rdcntvl_w} = pass_signals_reg;
 assign EXU_pc_to_MEM = pc;
 assign EXU_inst_to_MEM = inst;
 assign EXU_result_to_MEM = EXU_result;
 assign EXU_signals_pass_to_MEM = {res_from_mem, mem_offsets, gr_we, dest};
 assign mem_offsets = alu_result[1:0];
 
-assign {csr, csr_we, csr_num, csr_wmask, syscall, syscall_code, EXU_ertn_flush} = csr_signals_reg;
+assign {csr, csr_we, csr_num, csr_wmask, exception, ecode, syscall_code, EXU_ertn_flush} = csr_signals_reg;
 assign csr_wvalue = rkd_value;
 assign EXU_to_IDU_csr = csr;
-assign EXU_csr_signals_to_MEM = {csr,       // [0]
-                         csr_we,    // [1]
-                         csr_num,       // [15:2]
-                         csr_wmask,     // [47:16]
-                         csr_wvalue,    // [79:48]
-                         syscall,       // [80]
-                         syscall_code,  // [95:81]
-                         EXU_ertn_flush // [96]
-                        };
+assign EXU_csr_signals_to_MEM = {csr,               // [0]
+                                 csr_we,            // [1]
+                                 csr_num,           // [15:2], 14
+                                 csr_wmask,         // [47:16], 32
+                                 csr_wvalue,        // [79:48], 32
+                                 exception | isale, // [80]
+                                 newecode,          // [86:81], 6
+                                 syscall_code,      // [101:87], 15
+                                 EXU_ertn_flush     // [102]
+                                };
 // to data sram interface
 assign data_sram_en = 1'b1;
-assign data_sram_we = (~EX_valid || has_int || wb_ex || EXU_ertn_flush || MEM_has_int) ? 4'b0 :
+assign data_sram_we = (~EX_valid || has_int || wb_ex || ertn_lock_reg || MEM_has_int || isale) ? 4'b0 :
                       mem_we[2] ? 4'b1111 :
                       mem_we[1] ? (mem_offsets[1]       ? 4'b1100 : 4'b0011):
                       mem_we[0] ? (mem_offsets == 2'b00 ? 4'b0001 :
                                    mem_offsets == 2'b01 ? 4'b0010 :
                                    mem_offsets == 2'b10 ? 4'b0100 :
                                                           4'b1000): 4'b0;
-assign data_sram_addr = {alu_result[31:2], 2'b00};  // word aligned address(not sure...)
+assign data_sram_addr = {alu_result[31:2], 2'b00};  // word aligned address
 assign data_sram_wdata = mem_we[2] ?    rkd_value :
                          mem_we[1] ? {2{rkd_value[15:0]}} :
                          mem_we[0] ? {4{rkd_value[ 7:0]}} : 32'b0;
+
+assign isale = (~(alu_result[1:0] == 2'b0) & (mem_we[2] | res_from_mem[4]))|    // word-aligned check
+               (~(alu_result[0]   == 1'b0) & (mem_we[1] | res_from_mem[3] | res_from_mem[1]));    // half-word-aligned check
+assign newecode = isale ? `ECODE_ALE : ecode;
 
 // to IDU
 assign EXU_to_IDU_gr_we = gr_we;
@@ -334,5 +370,3 @@ assign EXU_to_MEM_valid = EX_valid && EXU_ready_go;
 assign EXU_allow_in = !EX_valid || (EXU_ready_go && MEM_allow_in);
 
 endmodule
-
-// valid?

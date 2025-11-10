@@ -1,3 +1,4 @@
+`include "ecodes.vh"
 module IDU(
     input  wire        clk,
     input  wire        reset,
@@ -8,6 +9,8 @@ module IDU(
     // from IFU
     input  wire [31:0] pc_from_IFU,
     input  wire [31:0] inst_from_IFU,
+    input  wire        isadef,
+    input  wire        beingexcept,
     // to IFU
     output wire        IDU_br_taken,
     output wire        IDU_br_taken_cancel,
@@ -22,12 +25,12 @@ module IDU(
     output wire        IDU_to_EXU_valid,
 
     // signals and data to EXU
-    output wire [64:0] IDU_to_EXU_csr_signals,
+    output wire [70:0] IDU_to_EXU_csr_signals,
 
     output wire [31:0] IDU_pc_to_EXU,
     output wire [31:0] IDU_inst_to_EXU,
     output wire[112:0] IDU_to_EX_ALU_signals,
-    output wire [13:0] IDU_to_EX_pass_signals,
+    output wire [15:0] IDU_to_EX_pass_signals,
     output wire [ 4:0] IDU_to_EX_div_signals,
 
     // forwarding from EXU/MEM/WB stage
@@ -57,6 +60,7 @@ module IDU(
 reg         ID_valid;
 reg  [31:0] inst_reg;
 reg  [31:0] pc_reg;
+reg  [ 1:0] beingexcept_reg;
 
 wire [31:0] inst;
 wire [31:0] pc;
@@ -146,11 +150,19 @@ wire        inst_mod_w;
 wire        inst_div_wu;
 wire        inst_mod_wu;
 
+wire        inst_break;
+wire        inst_syscall;
 wire        inst_csrrd;
 wire        inst_csrwr;
 wire        inst_csrxchg;
 wire        inst_ertn;
-wire        inst_syscall;
+
+wire        inst_rdcntvl_w;
+wire        inst_rdcntvh_w;
+wire        inst_rdcntid_w;
+
+wire        allinst;
+wire        ine;
 
 wire        need_ui5;
 wire        need_ui12;
@@ -184,6 +196,21 @@ always @(posedge clk ) begin
     end
     else if(IFU_to_IDU_valid && IDU_allow_in) begin
         pc_reg <= pc_from_IFU;
+    end
+end
+
+always @(posedge clk) begin         // it is like disable intr, just a trick to solve inst_reg = 0 :(
+    if (reset) begin
+        beingexcept_reg <= 2'h0;
+    end
+    else if (beingexcept) begin
+        beingexcept_reg <= 2'h2;
+    end
+    else if (ertn_flush & beingexcept_reg == 2'h2) begin
+        beingexcept_reg <= 2'h1;
+    end
+    else if (beingexcept_reg == 2'h1) begin
+        beingexcept_reg <= 2'h0;
     end
 end
 
@@ -226,6 +253,10 @@ assign inst_sra_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & o
 assign inst_mul_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h18];
 assign inst_mulh_w = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h19];
 assign inst_mulh_wu= op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h1] & op_19_15_d[5'h1a];
+assign inst_div_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h00];
+assign inst_mod_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h01];
+assign inst_div_wu = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h02];
+assign inst_mod_wu = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h03];
 assign inst_slli_w = op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h01];
 assign inst_srli_w = op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h09];
 assign inst_srai_w = op_31_26_d[6'h00] & op_25_22_d[4'h1] & op_21_20_d[2'h0] & op_19_15_d[5'h11];
@@ -254,17 +285,40 @@ assign inst_bltu   = op_31_26_d[6'h1a];
 assign inst_bgeu   = op_31_26_d[6'h1b];
 assign inst_lu12i_w= op_31_26_d[6'h05] & ~inst[25];
 assign inst_pcaddu12i = op_31_26_d[6'h07] & ~inst[25];
-assign inst_div_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h00];
-assign inst_mod_w  = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h01];
-assign inst_div_wu = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h02];
-assign inst_mod_wu = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h03];
 
+assign inst_break   = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h14];
+assign inst_syscall = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h16];
 assign inst_csrrd   = op_31_26_d[6'h01] & inst[25:24] == 2'b00 & (rj == 5'b00000);
 assign inst_csrwr   = op_31_26_d[6'h01] & inst[25:24] == 2'b00 & (rj == 5'b00001);
 assign inst_csrxchg = op_31_26_d[6'h01] & inst[25:24] == 2'b00 & (rj != 5'b00000) & (rj != 5'b00001);
 assign inst_ertn    = op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & op_19_15_d[5'h10] & (rk == 5'b01110);
-assign inst_syscall = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h2] & op_19_15_d[5'h16];
 
+assign inst_rdcntvl_w = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] & op_19_15_d[5'h00] & (rk == 5'h18) & (rj == 5'h00);
+assign inst_rdcntvh_w = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] & op_19_15_d[5'h00] & (rk == 5'h19) & (rj == 5'h00);
+assign inst_rdcntid_w = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] & op_19_15_d[5'h00] & (rk == 5'h18) & (rd == 5'h00);
+
+assign allinst =   (inst_rdcntvl_w | inst_rdcntvh_w | inst_rdcntid_w |
+                    inst_add_w  | inst_sub_w  | inst_slt    | inst_sltu  |
+                    inst_nor    | inst_and    | inst_or     | inst_xor   |
+                    inst_sll_w  | inst_srl_w  | inst_sra_w  |
+                    inst_mul_w  | inst_mulh_w | inst_mulh_wu|
+                    inst_div_w  | inst_mod_w  | inst_div_wu | inst_mod_wu|
+                    inst_slli_w | inst_srli_w | inst_srai_w |
+                    inst_addi_w |
+                    inst_slti   | inst_sltui  |
+                    inst_andi   | inst_ori    | inst_xori   |
+                    inst_ld_w   | inst_ld_h   | inst_ld_b   | inst_ld_hu | inst_ld_bu |
+                    inst_st_w   | inst_st_h   | inst_st_b   |
+                    inst_jirl   |
+                    inst_b      | inst_bl     |
+                    inst_beq    | inst_bne    |
+                    inst_blt    | inst_bge    |
+                    inst_bltu   | inst_bgeu   |
+                    inst_lu12i_w|inst_pcaddu12i|
+                    inst_break  | inst_syscall|
+                    inst_csrrd  | inst_csrwr  | inst_csrxchg|
+                    inst_ertn);
+assign ine = (~(allinst | (|beingexcept_reg))) | isadef;    // if fetch address exception, then inst is invalid
 
 assign need_ui5   = inst_slli_w | inst_srli_w | inst_srai_w;
 assign need_si12  = inst_addi_w |
@@ -284,7 +338,10 @@ assign br_offs = need_si26 ? {{ 4{i26[25]}}, i26[25:0], 2'b0} :
 
 assign jirl_offs = {{14{i16[15]}}, i16[15:0], 2'b0};
 
-assign src_reg_is_rd = inst_beq | inst_bne | inst_blt | inst_bge | inst_bltu | inst_bgeu | inst_st_w | inst_st_h | inst_st_b | inst_csrrd | inst_csrwr | inst_csrxchg;
+assign src_reg_is_rd = inst_beq | inst_bne | inst_blt | inst_bge | inst_bltu | inst_bgeu |
+                       inst_st_w | inst_st_h | inst_st_b |
+                       inst_csrrd | inst_csrwr | inst_csrxchg |
+                       inst_rdcntid_w | inst_rdcntvl_w | inst_rdcntvh_w;    // this is for they don't have rk
 assign rj_eq_rd = (rj_value == rkd_value);
 assign rj_lt_rd = ($signed(rj_value) < $signed(rkd_value));
 assign rj_ltu_rd= (rj_value < rkd_value);
@@ -328,7 +385,8 @@ assign use_rkd = inst_beq || inst_bne || inst_blt || inst_bge || inst_bltu || in
                  || inst_sll_w || inst_srl_w || inst_sra_w
                  || inst_mul_w || inst_mulh_w || inst_mulh_wu
                  || inst_div_w || inst_mod_w || inst_div_wu || inst_mod_wu
-                 || inst_csrwr || inst_csrxchg;
+                 || inst_csrwr || inst_csrxchg
+                 || inst_rdcntvl_w || inst_rdcntvh_w;
 assign EXU_raw = (rf1_raw_exu || rf2_raw_exu);
 assign MEM_raw = (rf1_raw_mem || rf2_raw_mem);
 assign WB_raw  = (rf1_raw_wb  || rf2_raw_wb);
@@ -340,26 +398,33 @@ wire        csr;
 wire        csr_we;
 wire [13:0] csr_num;
 wire [31:0] csr_wmask;
-wire        syscall;
+wire        exception;
+wire [ 5:0] ecode;
 wire [14:0] syscall_code;
 wire        IDU_ertn_flush;
 wire        csr_raw;
-assign csr          = inst_csrrd | inst_csrwr | inst_csrxchg;
+assign csr          = inst_csrrd | inst_csrwr | inst_csrxchg | inst_rdcntid_w;  // consider rdcntid as csr instruction, for it needs to read tid.csr
 assign csr_we       = inst_csrwr | inst_csrxchg;
-assign csr_num      = inst[23:10];
+assign csr_num      = inst_rdcntid_w ? 14'h40 : inst[23:10];
 assign csr_wmask    = inst_csrxchg ? rj_value : 32'hffffffff;
-assign syscall      = inst_syscall;
-assign syscall_code = inst[24:10];
+assign exception  = inst_break | inst_syscall | isadef | ine;
+assign ecode      = isadef      ? `ECODE_ADE :
+                    inst_syscall? `ECODE_SYS :
+                    inst_break  ? `ECODE_BRK :
+                    ine         ? `ECODE_INE :
+                                  `ECODE_INT ;
+assign syscall_code = inst[14:0];
 assign IDU_ertn_flush = inst_ertn;
 
 assign IDU_to_EXU_csr_signals = {
-    csr,           // [0]
-    csr_we,        // [1]
-    csr_num,       // [15:2]
-    csr_wmask,     // [47:16]
-    syscall,       // [48]
-    syscall_code,  // [63:49]
-    IDU_ertn_flush // [64]
+    csr,            // [0]
+    csr_we,         // [1]
+    csr_num,        // [15:2]
+    csr_wmask,      // [47:16]
+    exception,      // [48]
+    ecode,          // [54:49]
+    syscall_code,   // [69:55]
+    IDU_ertn_flush  // [70]
 };
 assign csr_raw = EXU_csr && (rf1_raw_exu || rf2_raw_exu) 
               || MEM_csr && (rf1_raw_mem || rf2_raw_mem) 
@@ -485,22 +550,27 @@ assign gr_we         = ~(inst_st_w | inst_st_h | inst_st_b |
                          inst_beq | inst_bne |
                          inst_blt | inst_bge |
                          inst_bltu | inst_bgeu | inst_b |
-                         inst_ertn);
+                         inst_ertn |
+                         inst_break | inst_syscall |
+                         ine);  // inst exception doesn't write register
 assign mem_we        = {inst_st_w, inst_st_h, inst_st_b};
-assign dest          = dst_is_r1 ? 5'd1 : rd;
+assign dest          = dst_is_r1 ? 5'd1 : 
+                       inst_rdcntid_w ? rj : rd;    // special case for rdcntid.w
 
 assign IDU_to_EX_pass_signals = {
     res_from_mem,   // [4:0]
     gr_we,          // [5]
     mem_we,         // [8:6]
-    dest            // [13:9]
+    dest,           // [13:9]
+    inst_rdcntvh_w, // [14]
+    inst_rdcntvl_w  // [15]
 };
 
 ////////////////////////////////////////////////////////////////////////
 //////                      register interface                   ///////
 ////////////////////////////////////////////////////////////////////////
 assign rf_raddr1 = rj;
-assign rf_raddr2 = src_reg_is_rd ? rd :rk;
+assign rf_raddr2 = src_reg_is_rd ? rd : rk;
 
 // ID status
 always @(posedge clk ) begin

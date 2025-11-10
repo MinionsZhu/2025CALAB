@@ -20,6 +20,8 @@ module IFU(
     //output wire [31:0] seq_pc,
     output wire [31:0] inst_to_IDU,
     output wire [31:0] pc_to_IDU,
+    output wire        isadef,      // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
+    output wire        beingexcept, // is being excepted
     input  wire        br_taken,
     input  wire        br_taken_cancel,
     input  wire [31:0] br_target,
@@ -31,7 +33,7 @@ module IFU(
 );
     // preif stage
     wire preIF_to_IF_valid;
-    reg IFU_valid;
+    reg  IFU_valid;
     wire IFU_allow_in;
 
     reg  [31:0] pc;
@@ -43,6 +45,8 @@ module IFU(
     assign inst_sram_we = 4'b0;
     assign inst_sram_addr = nextpc;
     assign inst_sram_wdata = 32'b0;
+
+    assign isadef = ~(pc[1:0] == 2'b0); // check current pc alignment
     
     // IF status
     always @(posedge clk) begin
@@ -63,9 +67,10 @@ module IFU(
     
     // pc register & output to IDU
     assign seq_pc = pc + 4;
-    assign nextpc = (has_int || wb_ex) ? ex_entry 
-                  : ertn_flush ? ertn_pc 
-                  : br_taken ? br_target 
+    assign beingexcept = has_int || wb_ex;
+    assign nextpc = (beingexcept) ? ex_entry
+                  : ertn_flush ? ertn_pc
+                  : br_taken ? br_target
                   : seq_pc;
     always @(posedge clk) begin
         if (reset) begin

@@ -27,6 +27,8 @@ wire        IFU_to_IDU_valid;
 wire        IFU_ready_go;
 wire [31:0] inst_to_IDU;
 wire [31:0] pc_to_IDU;
+wire        isadef;
+wire        beingexcept;
 wire        br_taken_cancel;
 wire        br_taken;
 wire [31:0] br_target;
@@ -42,16 +44,17 @@ wire [31:0] ex_entry;
 wire        wb_ex;
 wire [31:0] wb_pc;
 wire        ertn_flush;
-wire [5:0]  wb_ecode;
-wire [8:0]  wb_esubcode;
+wire [ 5:0] wb_ecode;
+wire [ 8:0] wb_esubcode;
 wire [31:0] wb_vaddr;
 wire [31:0] coreid_in;
 wire        has_int;
-wire [7:0]  hw_int_in;
+wire [ 7:0] hw_int_in;
 wire        ipi_int_in;
 
 assign hw_int_in = 8'b0;
 assign ipi_int_in = 1'b0;
+assign coreid_in = 32'b0;
 
 IFU u_IFU(
     .clk            (clk            ),
@@ -72,7 +75,9 @@ IFU u_IFU(
     // to IDU
     .inst_to_IDU    (inst_to_IDU    ),
     .pc_to_IDU      (pc_to_IDU      ),
-    .br_taken_cancel (br_taken_cancel ),
+    .isadef         (isadef         ),      // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
+    .beingexcept    (beingexcept    ),
+    .br_taken_cancel(br_taken_cancel),
     .br_target      (br_target      ),
     .br_taken       (br_taken       ),
     // handshaking signals with IDU
@@ -87,7 +92,7 @@ wire        IDU_ready_go;
 wire [31:0] IDU_pc_to_EXU;
 wire [31:0] IDU_inst_to_EXU;
 wire [112:0]IDU_to_EX_ALU_signals;
-wire [13:0] IDU_to_EX_pass_signals;
+wire [15:0] IDU_to_EX_pass_signals;
 wire [ 4:0] rf_raddr1;
 wire [ 4:0] rf_raddr2;
 wire [31:0] rf_rdata1;
@@ -106,7 +111,7 @@ wire [ 4:0] WB_to_IDU_dest;
 wire        WB_to_IDU_valid;
 wire [31:0] WB_to_IDU_forward;
 wire [ 4:0] IDU_to_EX_div_signals;
-wire [64:0] IDU_to_EXU_csr_signals;
+wire [70:0] IDU_to_EXU_csr_signals;
 wire        EXU_csr;
 wire        MEM_csr;
 wire        WB_csr;
@@ -115,15 +120,17 @@ IDU u_IDU(
     .clk               (clk                ),
     .reset             (reset              ),
     // ie
-    .wb_ex             (wb_ex               ),
-    .ertn_flush        (ertn_flush          ),
-    .has_int           (has_int             ),
+    .wb_ex             (wb_ex              ),
+    .ertn_flush        (ertn_flush         ),
+    .has_int           (has_int            ),
     // from IFU
     .pc_from_IFU       (pc_to_IDU          ),
     .inst_from_IFU     (inst_to_IDU        ),
+    .isadef            (isadef             ),   // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
+    .beingexcept       (beingexcept        ),
     // to IFU
     .IDU_br_taken      (br_taken           ),
-    .IDU_br_taken_cancel (br_taken_cancel   ),
+    .IDU_br_taken_cancel(br_taken_cancel   ),
     .IDU_br_target     (br_target          ),
     // handshaking signals with IFU
     .IFU_to_IDU_valid  (IFU_to_IDU_valid   ),
@@ -143,14 +150,14 @@ IDU u_IDU(
     .EXU_gr_we         (EXU_to_IDU_gr_we   ),
     .EXU_dest          (EXU_to_IDU_dest    ),
     .EXU_valid         (EXU_to_IDU_valid   ),
-    .EXU_to_ID_forward (EXU_to_IDU_forward),
+    .EXU_to_ID_forward (EXU_to_IDU_forward ),
     .EXU_current_is_ld (EXU_current_is_ld  ),
     .EXU_csr           (EXU_csr            ),
     .MEM_gr_we         (MEM_to_IDU_gr_we   ),
     .MEM_dest          (MEM_to_IDU_dest    ),
     .MEM_valid         (MEM_to_IDU_valid   ),
-    .MEM_to_ID_forward (MEM_to_IDU_forward),
-    .MEM_csr           (MEM_to_IDU_csr            ),
+    .MEM_to_ID_forward (MEM_to_IDU_forward ),
+    .MEM_csr           (MEM_to_IDU_csr     ),
     .WB_gr_we          (WB_to_IDU_gr_we    ),
     .WB_dest           (WB_to_IDU_dest     ),
     .WB_valid          (WB_to_IDU_valid    ),
@@ -171,7 +178,7 @@ wire [31:0] EXU_inst_to_MEM;
 wire [31:0] EXU_result_to_MEM;
 wire [12:0] EXU_signals_pass_to_MEM;
 wire        MEM_has_int;
-wire [96:0] EXU_csr_signals_to_MEM;
+wire[102:0] EXU_csr_signals_to_MEM;
 EXU u_EXU(
     .clk                    (clk                    ),
     .reset                  (reset                  ),
@@ -222,7 +229,8 @@ wire [31:0] MEM_pc_to_WB;
 wire [31:0] MEM_inst_to_WB;
 wire [31:0] MEM_result_to_WB;
 wire [ 5:0] MEM_signals_pass_to_WB;
-wire [96:0] MEM_csr_signals_to_WB;
+wire[102:0] MEM_csr_signals_to_WB;
+wire [31:0] MEM_memvaddr_to_WB;
 MEMU u_MEMU(
     .clk                (clk                ),
     .reset              (reset              ),
@@ -257,7 +265,8 @@ MEMU u_MEMU(
     .MEM_pc_to_WB       (MEM_pc_to_WB       ),
     .MEM_inst_to_WB     (MEM_inst_to_WB     ),
     .MEM_result_to_WB   (MEM_result_to_WB   ),
-    .MEM_signals_pass_to_WB(MEM_signals_pass_to_WB)
+    .MEM_signals_pass_to_WB(MEM_signals_pass_to_WB),
+    .MEM_memvaddr_to_WB (MEM_memvaddr_to_WB )
 );
 
 wire        WB_ready_go;
@@ -265,9 +274,11 @@ wire        WB_to_out_valid;
 wire [ 4:0] rf_waddr;
 wire [31:0] rf_wdata;
 wire        rf_we;
+wire [31:0] adefpc;
+assign adefpc = isadef ? pc_to_IDU : 32'b0;
 WBU u_WBU(
-    .clk                (clk                ),
-    .reset              (reset              ),
+    .clk               (clk                ),
+    .reset             (reset              ),
     // handshaking signals with MEM
     .MEM_to_WB_valid   (MEM_to_WB_valid    ),
     .WB_allow_in       (WB_allow_in        ),
@@ -280,6 +291,7 @@ WBU u_WBU(
     .MEM_inst_to_WB    (MEM_inst_to_WB     ),
     .MEM_result_to_WB  (MEM_result_to_WB   ),
     .MEM_signals_pass_to_WB(MEM_signals_pass_to_WB),
+    .MEM_memvaddr_to_WB(MEM_memvaddr_to_WB ),
     // to IDU
     .WB_to_IDU_csr     (WB_csr             ),
     .WB_to_IDU_gr_we   (WB_to_IDU_gr_we    ),
@@ -296,17 +308,19 @@ WBU u_WBU(
     .debug_rf_wnum     (debug_wb_rf_wnum   ), 
     .debug_rf_wdata    (debug_wb_rf_wdata  ),
     // csr interface
-    .csr_re            (csr_re            ),
-    .csr_we            (csr_we            ),
-    .csr_num           (csr_num           ),
-    .csr_rvalue        (csr_rvalue        ),
-    .csr_wmask         (csr_wmask         ),
-    .csr_wvalue        (csr_wvalue        ),
-    .wb_pc             (wb_pc             ),
-    .ertn_flush        (ertn_flush        ),
-    .wb_ex             (wb_ex             ),
-    .wb_ecode          (wb_ecode          ),
-    .wb_esubcode       (wb_esubcode       )
+    .csr_re            (csr_re             ),
+    .csr_we            (csr_we             ),
+    .csr_num           (csr_num            ),
+    .csr_rvalue        (csr_rvalue         ),
+    .csr_wmask         (csr_wmask          ),
+    .csr_wvalue        (csr_wvalue         ),
+    .wb_pc             (wb_pc              ),
+    .ertn_flush        (ertn_flush         ),
+    .wb_ex             (wb_ex              ),
+    .wb_ecode          (wb_ecode           ),
+    .wb_esubcode       (wb_esubcode        ),
+    .wb_vaddr          (wb_vaddr           ),
+    .adefpc            (adefpc             )
 );
 
 regfile u_regfile(

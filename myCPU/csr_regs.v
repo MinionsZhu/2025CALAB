@@ -1,4 +1,5 @@
 `include "csr.vh"
+`include "ecodes.vh"
 module csr_regs (
     input           clk,
     input           reset,
@@ -25,33 +26,42 @@ module csr_regs (
     input   [ 7:0]  hw_int_in,
     input           ipi_int_in
 );
-    // timer
-    reg [31:0] timer_cnt;
     // CRMD CSR
-    reg [1:0]   csr_crmd_plv;
+    reg  [ 1:0] csr_crmd_plv;
     reg         csr_crmd_ie;
     reg         csr_crmd_da;
     reg         csr_crmd_pg;
-    reg [1:0]   csr_crmd_datf;
-    reg [1:0]   csr_crmd_datm;
+    reg  [ 1:0] csr_crmd_datf;
+    reg  [ 1:0] csr_crmd_datm;
     // PRMD CSR
-    reg [1:0]   csr_prmd_pplv;
+    reg  [ 1:0] csr_prmd_pplv;
     reg         csr_prmd_pie;
     // ECFG CSR
-    reg [12:0]  csr_ecfg_lie;
+    reg  [12:0] csr_ecfg_lie;
     // ESTAT CSR
-    reg [12:0]  csr_estat_is;
-    reg [ 5:0]  csr_estat_ecode;
-    reg [ 8:0]  csr_estat_esubcode;
+    reg  [12:0] csr_estat_is;
+    reg  [ 5:0] csr_estat_ecode;
+    reg  [ 8:0] csr_estat_esubcode;
     // ERA CSR
-    reg [31:0]  csr_era_pc;
+    reg  [31:0] csr_era_pc;
+    // BADV CSR
+    reg  [31:0] csr_badv_vaddr;
     // EENTRY CSR
-    reg [25:0]  csr_eentry_va;
+    reg  [25:0] csr_eentry_va;
     // SAVE CSR
-    reg [31:0]  csr_save0;
-    reg [31:0]  csr_save1;
-    reg [31:0]  csr_save2;
-    reg [31:0]  csr_save3;
+    reg  [31:0] csr_save0;
+    reg  [31:0] csr_save1;
+    reg  [31:0] csr_save2;
+    reg  [31:0] csr_save3;
+    // TID CSR
+    reg  [31:0] csr_tid;
+    // TCFG CSR & wires
+    reg         csr_tcfg_en;
+    reg         csr_tcfg_periodic;
+    reg  [29:0] csr_tcfg_initval;
+    wire [31:0] tcfg_next_value;
+    wire [31:0] csr_tval;
+    reg  [31:0] timer_cnt;
 
     // CRMD
     always @(posedge clk) begin
@@ -59,7 +69,7 @@ module csr_regs (
             csr_crmd_plv <= 2'b0;
             csr_crmd_ie  <= 1'b0;
         end
-        else if(wb_ex) begin
+        else if(wb_ex | has_int) begin
             csr_crmd_plv <= 2'b0;
             csr_crmd_ie  <= 1'b0;
         end
@@ -85,7 +95,7 @@ module csr_regs (
     end
     // PRMD
     always @(posedge clk) begin
-        if(wb_ex) begin
+        if(wb_ex | has_int) begin
             csr_prmd_pplv <= csr_crmd_plv;
             csr_prmd_pie  <= csr_crmd_ie;
         end
@@ -128,19 +138,26 @@ module csr_regs (
         csr_estat_is[12]  <= ipi_int_in;
     end
     always @(posedge clk) begin
-        if(wb_ex) begin
+        if(wb_ex | has_int) begin
             csr_estat_ecode    <= wb_ecode;
             csr_estat_esubcode <= wb_esubcode;
         end
     end
     // ERA
     always @(posedge clk) begin
-        if(wb_ex) begin
+        if(wb_ex | has_int) begin
             csr_era_pc <= wb_pc;
         end
         else if(csr_we && (csr_num == `CSR_ERA)) begin
             csr_era_pc <=  csr_wmask[`CSR_ERA_PC]&csr_wvalue[`CSR_ERA_PC]
                         | ~csr_wmask[`CSR_ERA_PC]&csr_era_pc;
+        end
+    end
+    // BADV
+    always @(posedge clk) begin
+        if(wb_ex && (wb_ecode == `ECODE_ADE || wb_ecode == `ECODE_ALE)) begin
+            csr_badv_vaddr <=  (wb_ecode == `ECODE_ADE && 
+                                wb_esubcode == `ESUBCODE_ADEF) ? wb_pc : wb_vaddr;
         end
     end
     // EENTRY
@@ -150,32 +167,35 @@ module csr_regs (
                            | ~csr_wmask[`CSR_EENTRY_VA]&csr_eentry_va;
         end
     end
-    // TODO: BADVADDR
     // SAVE0-3
     always @(posedge clk) begin
         if(csr_we && (csr_num == `CSR_SAVE0)) begin
-            csr_save0 <=  csr_wmask[`CSR_SAVE0]&csr_wvalue[`CSR_SAVE0]
-                       | ~csr_wmask[`CSR_SAVE0]&csr_save0;
+            csr_save0 <=  csr_wmask[`CSR_SAVE0_DATA]&csr_wvalue[`CSR_SAVE0_DATA]
+                       | ~csr_wmask[`CSR_SAVE0_DATA]&csr_save0;
         end
         if(csr_we && (csr_num == `CSR_SAVE1)) begin
-            csr_save1 <=  csr_wmask[`CSR_SAVE1]&csr_wvalue[`CSR_SAVE1]
-                       | ~csr_wmask[`CSR_SAVE1]&csr_save1;
+            csr_save1 <=  csr_wmask[`CSR_SAVE1_DATA]&csr_wvalue[`CSR_SAVE1_DATA]
+                       | ~csr_wmask[`CSR_SAVE1_DATA]&csr_save1;
         end
         if(csr_we && (csr_num == `CSR_SAVE2)) begin
-            csr_save2 <=  csr_wmask[`CSR_SAVE2]&csr_wvalue[`CSR_SAVE2]
-                       | ~csr_wmask[`CSR_SAVE2]&csr_save2;
+            csr_save2 <=  csr_wmask[`CSR_SAVE2_DATA]&csr_wvalue[`CSR_SAVE2_DATA]
+                       | ~csr_wmask[`CSR_SAVE2_DATA]&csr_save2;
         end
         if(csr_we && (csr_num == `CSR_SAVE3)) begin
-            csr_save3 <=  csr_wmask[`CSR_SAVE3]&csr_wvalue[`CSR_SAVE3]
-                       | ~csr_wmask[`CSR_SAVE3]&csr_save3;
+            csr_save3 <=  csr_wmask[`CSR_SAVE3_DATA]&csr_wvalue[`CSR_SAVE3_DATA]
+                       | ~csr_wmask[`CSR_SAVE3_DATA]&csr_save3;
         end
     end
-    // TODO: TID
-    reg             csr_tcfg_en;
-    reg             csr_tcfg_periodic;
-    reg     [29:0]  csr_tcfg_initval;
-    wire    [31:0]  tcfg_next_value;
-    wire    [31:0]  csr_tval;
+    // TID
+    always @(posedge clk) begin
+        if (reset) begin
+            csr_tid <= coreid_in;
+        end
+        else if (csr_we && (csr_num == `CSR_TID)) begin
+            csr_tid <=  csr_wmask[`CSR_TID_TID]&csr_wvalue[`CSR_TID_TID]
+                     | ~csr_wmask[`CSR_TID_TID]&csr_tid;
+        end
+    end
     // TCFG
     always @(posedge clk) begin
         if(reset) begin
@@ -193,10 +213,9 @@ module csr_regs (
                                | ~csr_wmask[`CSR_TCFG_INITVAL]&csr_tcfg_initval;
         end
     end
-
-    assign tcfg_next_value = csr_wmask[31:0]&csr_wvalue[31:0]
-                           | ~csr_wmask[31:0]&{csr_tcfg_initval, csr_tcfg_periodic, csr_tcfg_en};
-    // timer
+    // TVAL
+    assign tcfg_next_value =  csr_wmask[31:0] & csr_wvalue[31:0]
+                           | ~csr_wmask[31:0] &{csr_tcfg_initval, csr_tcfg_periodic, csr_tcfg_en};
     always @(posedge clk) begin
         if(reset) begin
             timer_cnt <= 32'hffffffff;
@@ -220,11 +239,13 @@ module csr_regs (
     wire    [31:0]  csr_ecfg_rvalue;
     wire    [31:0]  csr_estat_rvalue;
     wire    [31:0]  csr_era_rvalue;
+    wire    [31:0]  csr_badv_rvalue;
     wire    [31:0]  csr_eentry_rvalue;
     wire    [31:0]  csr_save0_rvalue;
     wire    [31:0]  csr_save1_rvalue;
     wire    [31:0]  csr_save2_rvalue;
     wire    [31:0]  csr_save3_rvalue;
+    wire    [31:0]  csr_tid_rvalue;
     wire    [31:0]  csr_tcfg_rvalue;
     wire    [31:0]  csr_tval_rvalue;
     assign csr_crmd_rvalue   = {28'b0, csr_crmd_da, csr_crmd_ie, csr_crmd_plv};
@@ -232,11 +253,13 @@ module csr_regs (
     assign csr_ecfg_rvalue   = {19'b0, csr_ecfg_lie};
     assign csr_estat_rvalue  = { 1'b0, csr_estat_esubcode, csr_estat_ecode, 3'b0, csr_estat_is};
     assign csr_era_rvalue    = csr_era_pc;
+    assign csr_badv_rvalue   = csr_badv_vaddr;
     assign csr_eentry_rvalue = {csr_eentry_va, 6'b0};
     assign csr_save0_rvalue  = csr_save0;
     assign csr_save1_rvalue  = csr_save1;
     assign csr_save2_rvalue  = csr_save2;
     assign csr_save3_rvalue  = csr_save3;
+    assign csr_tid_rvalue    = csr_tid;
     assign csr_tcfg_rvalue   = {csr_tcfg_initval, csr_tcfg_periodic, csr_tcfg_en};
     assign csr_tval_rvalue   = csr_tval;
     assign csr_rvalue = {32{csr_num == `CSR_CRMD}}   & csr_crmd_rvalue   |
@@ -244,17 +267,44 @@ module csr_regs (
                         {32{csr_num == `CSR_ECFG}}   & csr_ecfg_rvalue   |
                         {32{csr_num == `CSR_ESTAT}}  & csr_estat_rvalue  |
                         {32{csr_num == `CSR_ERA}}    & csr_era_rvalue    |
+                        {32{csr_num == `CSR_BADV}}   & csr_badv_rvalue   |
                         {32{csr_num == `CSR_EENTRY}} & csr_eentry_rvalue |
                         {32{csr_num == `CSR_SAVE0}}  & csr_save0_rvalue  |
                         {32{csr_num == `CSR_SAVE1}}  & csr_save1_rvalue  |
                         {32{csr_num == `CSR_SAVE2}}  & csr_save2_rvalue  |
                         {32{csr_num == `CSR_SAVE3}}  & csr_save3_rvalue  |
+                        {32{csr_num == `CSR_TID}}    & csr_tid_rvalue    |
                         {32{csr_num == `CSR_TCFG}}   & csr_tcfg_rvalue   |
                         {32{csr_num == `CSR_TVAL}}   & csr_tval_rvalue   |
-                        32'b0;
+                        32'b0;  // contains ticlr
     assign ertn_pc  = csr_era_pc;
     assign ex_entry = {csr_eentry_va, 6'b0};
     // interrupt pending
-    assign has_int = (csr_estat_is[11:0] & csr_ecfg_lie[11:0]) != 12'b0 && csr_crmd_ie;
+    reg  intr_delay;
+    reg  pulse_out;
+    wire intr_in;
+    assign intr_in = (csr_estat_is[12:0] & csr_ecfg_lie[12:0]) != 12'b0 && csr_crmd_ie;
+    always @(posedge clk) begin
+        if (reset) begin
+            intr_delay <= 1'b0;
+        end
+        else begin
+            intr_delay <= intr_in;
+        end
+    end
+    always @(posedge clk) begin
+        if (reset) begin
+            pulse_out  <= 1'b0;
+        end
+        else begin
+            if (intr_in == 1'b1 && intr_delay == 1'b0) begin
+                pulse_out <= 1'b1;
+            end
+            else begin
+                pulse_out <= 1'b0;
+            end
+        end
+    end
+    assign has_int = pulse_out;
 
 endmodule
