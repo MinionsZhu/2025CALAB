@@ -115,9 +115,9 @@ always @(posedge clk) begin
     if (reset) begin
         csr_signals_reg <= 65'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
+    /*else if(ertn_flush || has_int || wb_ex) begin
         csr_signals_reg <= 65'b0;
-    end
+    end*/
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
         csr_signals_reg <= IDU_to_EXU_csr_signals;
     end
@@ -127,9 +127,9 @@ always @(posedge clk) begin
     if (reset) begin
         inst_reg <= 32'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
+    /*else if(ertn_flush || has_int || wb_ex) begin
         inst_reg <= 32'b0;
-    end
+    end*/
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
         inst_reg <= IDU_inst_to_EXU;
     end
@@ -138,9 +138,9 @@ always @(posedge clk) begin
     if (reset) begin
         pc_reg <= 32'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
+    /*else if(ertn_flush || has_int || wb_ex) begin
         pc_reg <= 32'b0;
-    end
+    end*/
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
         pc_reg <= IDU_pc_to_EXU;
     end
@@ -149,9 +149,9 @@ always @(posedge clk) begin
     if (reset) begin
         alu_signals_reg <= 113'b0;
     end
-    else if (ertn_flush || has_int || wb_ex) begin
+    /*else if (ertn_flush || has_int || wb_ex) begin
         alu_signals_reg <= 113'b0;
-    end
+    end*/
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
         alu_signals_reg <= IDU_to_EX_ALU_signals;
     end
@@ -160,9 +160,9 @@ always @(posedge clk) begin
     if (reset) begin
         pass_signals_reg <= 14'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
+    /*else if(ertn_flush || has_int || wb_ex) begin
         pass_signals_reg <= 14'b0;
-    end
+    end*/
     else if (EXU_allow_in && IDU_to_EXU_valid) begin
         pass_signals_reg <= IDU_to_EX_pass_signals;
     end
@@ -233,7 +233,7 @@ alu EXU_alu(
     .alu_result  (alu_result)
 );
 
-assign use_div = div_signals_reg[4];
+assign use_div = div_signals_reg[4] & !(ertn_flush| has_int | wb_ex);
 assign div_op  = div_signals_reg[3:0];
 assign signed_div_dividend_tdata = rj_value;
 assign signed_div_divisor_tdata  = rkd_value;
@@ -330,7 +330,7 @@ always @(posedge clk) begin
     end
 end
 assign EXU_ready_go = use_div ? (signed_div_dout_valid | unsigned_div_dout_valid) : 1'b1;
-assign EXU_to_MEM_valid = EX_valid && EXU_ready_go;
+assign EXU_to_MEM_valid = EX_valid && EXU_ready_go && !has_int && !wb_ex && !ertn_flush;
 assign EXU_allow_in = !EX_valid || (EXU_ready_go && MEM_allow_in);
 
 endmodule

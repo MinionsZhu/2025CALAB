@@ -140,13 +140,13 @@ end
 // csr signals
 assign {WBU_csr, WBU_csr_we, WBU_csr_num, WBU_csr_wmask, WBU_csr_wvalue, WBU_syscall, WBU_syscall_code, WBU_ertn_flush} = csr_signals_reg;
 assign csr_re = 1'b1;
-assign csr_we = WBU_csr_we;
+assign csr_we = WBU_csr_we && WB_valid;
 assign csr_num = WBU_csr_num;
 assign csr_wmask = WBU_csr_wmask;
 assign csr_wvalue = WBU_csr_wvalue;
 assign wb_pc = pc;
-assign ertn_flush = WBU_ertn_flush;
-assign wb_ex = WBU_syscall;
+assign ertn_flush = WBU_ertn_flush && WB_valid;
+assign wb_ex = WBU_syscall && WB_valid;
 assign wb_ecode = WBU_syscall ? 6'hb : 6'h0;
 assign wb_esubcode = 9'h0;
 assign WB_to_IDU_csr = WBU_csr;

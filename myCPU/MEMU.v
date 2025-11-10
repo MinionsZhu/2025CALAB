@@ -73,9 +73,9 @@ always @(posedge clk) begin
     if (reset) begin
         csr_signals_reg <= 97'b0;
     end
-    else if (wb_ex || has_int || ertn_flush) begin
+    /*else if (wb_ex || has_int || ertn_flush) begin
         csr_signals_reg <= 97'b0;
-    end
+    end*/
     else if (MEM_allow_in && EXU_to_MEM_valid) begin
         csr_signals_reg <= EXU_csr_signals_to_MEM;
     end
@@ -85,9 +85,9 @@ always @(posedge clk) begin
     if (reset) begin
         inst_reg <= 32'b0;
     end
-    else if (wb_ex || has_int || ertn_flush) begin
+    /*else if (wb_ex || has_int || ertn_flush) begin
         inst_reg <= 32'b0;
-    end
+    end*/
     else if (MEM_allow_in && EXU_to_MEM_valid) begin
         inst_reg <= EXU_inst_to_MEM;
     end
@@ -97,9 +97,9 @@ always @(posedge clk) begin
     if (reset) begin
         pc_reg <= 32'b0;
     end
-    else if (wb_ex || has_int || ertn_flush) begin
+    /*else if (wb_ex || has_int || ertn_flush) begin
         pc_reg <= 32'b0;
-    end
+    end*/
     else if (MEM_allow_in && EXU_to_MEM_valid) begin
         pc_reg <= EXU_pc_to_MEM;
     end
@@ -109,9 +109,9 @@ always @(posedge clk) begin
     if (reset) begin
         ex_result_reg <= 32'b0;
     end
-    else if (wb_ex || has_int || ertn_flush) begin
+    /*else if (wb_ex || has_int || ertn_flush) begin
         ex_result_reg <= 32'b0;
-    end
+    end*/
     else if (MEM_allow_in && EXU_to_MEM_valid) begin
         ex_result_reg <= EXU_result_to_MEM;
     end
@@ -121,9 +121,9 @@ always @(posedge clk) begin
     if (reset) begin
         signals_pass_reg <= 13'b0;
     end
-    else if (wb_ex || has_int || ertn_flush) begin
+   /* else if (wb_ex || has_int || ertn_flush) begin
         signals_pass_reg <= 13'b0;
-    end
+    end*/
     else if (MEM_allow_in && EXU_to_MEM_valid) begin
         signals_pass_reg <= EXU_signals_pass_to_MEM;
     end
@@ -153,19 +153,19 @@ assign mem_result[31:16] = ({16{res_from_mem[2]}} & {16{shift_rdata[ 7]}} )|
 
 // 4 = ld.w, 3 = ld.h, 2 = ld.b, 1 = ld.hu, 0 = ld.bu
 
-assign MEM_pc_to_WB = pc &{32{!(wb_ex || has_int || ertn_flush)}};
-assign MEM_inst_to_WB = inst&{32{!(wb_ex || has_int || ertn_flush)}};
-assign MEM_result_to_WB = (wb_ex || has_int || ertn_flush) ? 32'b0 : (res_from_mem ? mem_result : ex_result);
-assign MEM_csr_signals_to_WB = csr_signals_reg & {97{!(wb_ex || has_int || ertn_flush)}};
+assign MEM_pc_to_WB = pc /*&{32{!(wb_ex || has_int || ertn_flush)}}*/;
+assign MEM_inst_to_WB = inst/*&{32{!(wb_ex || has_int || ertn_flush)}}*/;
+assign MEM_result_to_WB = /*(wb_ex || has_int || ertn_flush) ? 32'b0 : */(res_from_mem ? mem_result : ex_result);
+assign MEM_csr_signals_to_WB = csr_signals_reg /*& {97{!(wb_ex || has_int || ertn_flush)}}*/;
 
-assign MEM_signals_pass_to_WB = {gr_we, dest} & {6{!(wb_ex || has_int || ertn_flush)}};
+assign MEM_signals_pass_to_WB = {gr_we, dest} /*& {6{!(wb_ex || has_int || ertn_flush)}}*/;
 
 assign MEM_has_int = syscall;
 // to IDU
 assign MEM_to_IDU_csr   = csr;
 assign MEM_to_IDU_gr_we = gr_we;
 assign MEM_to_IDU_dest  = dest;
-assign MEM_to_IDU_valid = MEM_valid;
+assign MEM_to_IDU_valid = MEM_valid && !(wb_ex || has_int || ertn_flush);
 assign MEM_to_IDU_forward = MEM_result_to_WB;
 
 // MEM status
@@ -178,7 +178,7 @@ always @(posedge clk) begin
     end
 end
 assign MEM_ready_go = 1'b1;
-assign MEM_to_WB_valid = MEM_valid && MEM_ready_go;
+assign MEM_to_WB_valid = MEM_valid && MEM_ready_go && !(wb_ex || has_int || ertn_flush);
 assign MEM_allow_in = !MEM_valid || (MEM_ready_go && WB_allow_in);
 
 endmodule

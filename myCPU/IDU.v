@@ -167,9 +167,9 @@ always @(posedge clk ) begin
     if (reset) begin
         inst_reg <= 32'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
+    /*else if(ertn_flush || has_int || wb_ex) begin
         inst_reg <= 32'b0;
-    end
+    end*/
     else if(IFU_to_IDU_valid && IDU_allow_in) begin
         inst_reg <= inst_from_IFU;
     end
@@ -179,9 +179,9 @@ always @(posedge clk ) begin
     if (reset) begin
         pc_reg <= 32'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
+    /*else if(ertn_flush || has_int || wb_ex) begin
         pc_reg <= 32'b0;
-    end
+    end*/
     else if(IFU_to_IDU_valid && IDU_allow_in) begin
         pc_reg <= pc_from_IFU;
     end
@@ -349,7 +349,7 @@ assign csr_we       = inst_csrwr | inst_csrxchg;
 assign csr_num      = inst[23:10];
 assign csr_wmask    = inst_csrxchg ? rj_value : 32'hffffffff;
 assign syscall      = inst_syscall;
-assign syscall_code = inst[24:10];
+assign syscall_code = inst[14:0];
 assign IDU_ertn_flush = inst_ertn;
 
 assign IDU_to_EXU_csr_signals = {
@@ -517,7 +517,7 @@ end
 wire block;
 assign block = !ertn_flush && !wb_ex && !has_int && ((EXU_current_is_ld && EXU_raw) || csr_raw);
 
-assign IDU_to_EXU_valid  = ID_valid && IDU_ready_go;
+assign IDU_to_EXU_valid  = ID_valid && IDU_ready_go && !(has_int || wb_ex || ertn_flush);
 assign IDU_ready_go      = !block;
 assign IDU_allow_in      = !ID_valid || (IDU_ready_go && EXU_allow_in);
 

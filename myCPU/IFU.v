@@ -58,7 +58,7 @@ module IFU(
     end
     assign preIF_to_IF_valid = !reset;
     assign IFU_ready_go = 1'b1;
-    assign IFU_to_IDU_valid = IFU_valid && IFU_ready_go;
+    assign IFU_to_IDU_valid = IFU_valid && IFU_ready_go && !(has_int || wb_ex || ertn_flush);
     assign IFU_allow_in = !IFU_valid || (IFU_ready_go && IDU_allow_in);
     
     // pc register & output to IDU
