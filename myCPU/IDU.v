@@ -1,3 +1,4 @@
+`include "busdef.vh"
 `include "ecodes.vh"
 module IDU(
     input  wire        clk,
@@ -5,33 +6,32 @@ module IDU(
     // ie
     input  wire        wb_ex,
     input  wire        ertn_flush,
-    input  wire        has_int,
+    input  wire        isintr,  // from csr_regs.v, to attach interrupt exception
+
     // from IFU
-    input  wire [31:0] pc_from_IFU,
-    input  wire [31:0] inst_from_IFU,
+    input  wire [31:0] if2idPC,
+    input  wire [31:0] if2idInst,
     input  wire        isadef,
-    input  wire        beingexcept,
+
     // to IFU
-    output wire        IDU_br_taken,
-    output wire        IDU_br_taken_cancel,
-    output wire [31:0] IDU_br_target,
+    output wire        br_taken,
+    output wire        br_taken_cancel,
+    output wire [31:0] br_target,
 
     // handshaking signals with IFU
-    input  wire        IFU_to_IDU_valid,
-    output wire        IDU_allow_in,
+    input  wire        ifValidout,
+    output wire        idAllowin,
     // handshaking signals with EXU
-    input  wire        EXU_allow_in,
-    output wire        IDU_ready_go,
-    output wire        IDU_to_EXU_valid,
+    input  wire        exAllowin,
+    output wire        idValidout,
 
     // signals and data to EXU
-    output wire [70:0] IDU_to_EXU_csr_signals,
-
-    output wire [31:0] IDU_pc_to_EXU,
-    output wire [31:0] IDU_inst_to_EXU,
-    output wire[112:0] IDU_to_EX_ALU_signals,
-    output wire [15:0] IDU_to_EX_pass_signals,
-    output wire [ 4:0] IDU_to_EX_div_signals,
+    output wire [31:0] id2exPC,
+    output wire [31:0] id2exInst,
+    output wire [ 4:0] id2exDivBus,
+    output wire [`CSRBUSL] id2exCsrBus,
+    output wire [`ALUBUSL] id2exALUBus,
+    output wire [`IDPASSBUSL] id2exPassBus,
 
     // forwarding from EXU/MEM/WB stage
     input  wire [ 4:0] EXU_dest,
@@ -57,16 +57,13 @@ module IDU(
     input  wire [31:0] rf_rdata1,
     input  wire [31:0] rf_rdata2
 );
-reg         ID_valid;
+
+reg         idValidReg;
 reg  [31:0] inst_reg;
 reg  [31:0] pc_reg;
-reg  [ 1:0] beingexcept_reg;
 
 wire [31:0] inst;
 wire [31:0] pc;
-wire        br_taken;
-wire        br_taken_cancel;
-wire [31:0] br_target;
 
 wire [14:0] alu_op;
 wire        src1_is_pc;
@@ -175,42 +172,21 @@ wire        src2_is_4;
 /////////////////////////////////////////////////////////////////////
 //////                         ID regs                        ///////
 /////////////////////////////////////////////////////////////////////
-always @(posedge clk ) begin
+always @(posedge clk) begin
     if (reset) begin
         inst_reg <= 32'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
-        inst_reg <= 32'b0;
-    end
-    else if(IFU_to_IDU_valid && IDU_allow_in) begin
-        inst_reg <= inst_from_IFU;
+    else if(ifValidout && idAllowin) begin
+        inst_reg <= if2idInst;
     end
 end
 
-always @(posedge clk ) begin
+always @(posedge clk) begin
     if (reset) begin
         pc_reg <= 32'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
-        pc_reg <= 32'b0;
-    end
-    else if(IFU_to_IDU_valid && IDU_allow_in) begin
-        pc_reg <= pc_from_IFU;
-    end
-end
-
-always @(posedge clk) begin         // it is like disable intr, just a trick to solve inst_reg = 0 :(
-    if (reset) begin
-        beingexcept_reg <= 2'h0;
-    end
-    else if (beingexcept) begin
-        beingexcept_reg <= 2'h2;
-    end
-    else if (ertn_flush & beingexcept_reg == 2'h2) begin
-        beingexcept_reg <= 2'h1;
-    end
-    else if (beingexcept_reg == 2'h1) begin
-        beingexcept_reg <= 2'h0;
+    else if(ifValidout && idAllowin) begin
+        pc_reg <= if2idPC;
     end
 end
 
@@ -318,7 +294,7 @@ assign allinst =   (inst_rdcntvl_w | inst_rdcntvh_w | inst_rdcntid_w |
                     inst_break  | inst_syscall|
                     inst_csrrd  | inst_csrwr  | inst_csrxchg|
                     inst_ertn);
-assign ine = (~(allinst | (|beingexcept_reg))) | isadef;    // if fetch address exception, then inst is invalid
+assign ine = ~(allinst);    // if fetch address exception, then inst is invalid
 
 assign need_ui5   = inst_slli_w | inst_srli_w | inst_srai_w;
 assign need_si12  = inst_addi_w |
@@ -333,20 +309,20 @@ assign need_si20  = inst_lu12i_w | inst_pcaddu12i;
 assign need_si26  = inst_b | inst_bl;
 assign src2_is_4  = inst_jirl | inst_bl;
 
-assign br_offs = need_si26 ? {{ 4{i26[25]}}, i26[25:0], 2'b0} :
-                             {{14{i16[15]}}, i16[15:0], 2'b0} ;
+assign br_offs  = need_si26 ? {{ 4{i26[25]}}, i26[25:0], 2'b0} :
+                                {{14{i16[15]}}, i16[15:0], 2'b0} ;
 
 assign jirl_offs = {{14{i16[15]}}, i16[15:0], 2'b0};
 
 assign src_reg_is_rd = inst_beq | inst_bne | inst_blt | inst_bge | inst_bltu | inst_bgeu |
-                       inst_st_w | inst_st_h | inst_st_b |
-                       inst_csrrd | inst_csrwr | inst_csrxchg |
-                       inst_rdcntid_w | inst_rdcntvl_w | inst_rdcntvh_w;    // this is for they don't have rk
-assign rj_eq_rd = (rj_value == rkd_value);
-assign rj_lt_rd = ($signed(rj_value) < $signed(rkd_value));
-assign rj_ltu_rd= (rj_value < rkd_value);
+                    inst_st_w | inst_st_h | inst_st_b |
+                    inst_csrrd | inst_csrwr | inst_csrxchg |
+                    inst_rdcntid_w | inst_rdcntvl_w | inst_rdcntvh_w;    // this is for they don't have rk
+assign rj_eq_rd  = (rj_value == rkd_value);
+assign rj_lt_rd  = ($signed(rj_value) < $signed(rkd_value));
+assign rj_ltu_rd = (rj_value < rkd_value);
 
-assign dst_is_r1     = inst_bl;
+assign dst_is_r1 = inst_bl;
 
 ///////////////////////////////////////////////////////////////////////
 //////                         raw dealing                      ///////
@@ -370,23 +346,23 @@ wire raw;
 assign possible_raw_exu = EXU_valid && EXU_gr_we && (EXU_dest != 5'b0);
 assign possible_raw_mem = MEM_valid && MEM_gr_we && (MEM_dest != 5'b0);
 assign possible_raw_wb  = WB_valid  && WB_gr_we  && (WB_dest  != 5'b0);
-assign rf1_raw_exu = ID_valid && possible_raw_exu && use_rj  && (rf_raddr1 == EXU_dest);
-assign rf2_raw_exu = ID_valid && possible_raw_exu && use_rkd && (rf_raddr2 == EXU_dest);
-assign rf1_raw_mem = ID_valid && possible_raw_mem && use_rj  && (rf_raddr1 == MEM_dest);
-assign rf2_raw_mem = ID_valid && possible_raw_mem && use_rkd && (rf_raddr2 == MEM_dest);
-assign rf1_raw_wb  = ID_valid && possible_raw_wb  && use_rj  && (rf_raddr1 == WB_dest);
-assign rf2_raw_wb  = ID_valid && possible_raw_wb  && use_rkd && (rf_raddr2 == WB_dest);
+assign rf1_raw_exu = idValidReg && possible_raw_exu && use_rj  && (rf_raddr1 == EXU_dest);
+assign rf2_raw_exu = idValidReg && possible_raw_exu && use_rkd && (rf_raddr2 == EXU_dest);
+assign rf1_raw_mem = idValidReg && possible_raw_mem && use_rj  && (rf_raddr1 == MEM_dest);
+assign rf2_raw_mem = idValidReg && possible_raw_mem && use_rkd && (rf_raddr2 == MEM_dest);
+assign rf1_raw_wb  = idValidReg && possible_raw_wb  && use_rj  && (rf_raddr1 == WB_dest);
+assign rf2_raw_wb  = idValidReg && possible_raw_wb  && use_rkd && (rf_raddr2 == WB_dest);
 assign use_rj  = !inst_b && !inst_bl;
 assign use_rkd = inst_beq || inst_bne || inst_blt || inst_bge || inst_bltu || inst_bgeu
-                 || inst_sub_w || inst_slt || inst_sltu
-                 || inst_nor || inst_and || inst_or || inst_xor
-                 || inst_st_w || inst_st_h || inst_st_b
-                 || inst_add_w
-                 || inst_sll_w || inst_srl_w || inst_sra_w
-                 || inst_mul_w || inst_mulh_w || inst_mulh_wu
-                 || inst_div_w || inst_mod_w || inst_div_wu || inst_mod_wu
-                 || inst_csrwr || inst_csrxchg
-                 || inst_rdcntvl_w || inst_rdcntvh_w;
+                || inst_sub_w || inst_slt || inst_sltu
+                || inst_nor || inst_and || inst_or || inst_xor
+                || inst_st_w || inst_st_h || inst_st_b
+                || inst_add_w
+                || inst_sll_w || inst_srl_w || inst_sra_w
+                || inst_mul_w || inst_mulh_w || inst_mulh_wu
+                || inst_div_w || inst_mod_w || inst_div_wu || inst_mod_wu
+                || inst_csrwr || inst_csrxchg
+                || inst_rdcntvl_w || inst_rdcntvh_w;
 assign EXU_raw = (rf1_raw_exu || rf2_raw_exu);
 assign MEM_raw = (rf1_raw_mem || rf2_raw_mem);
 assign WB_raw  = (rf1_raw_wb  || rf2_raw_wb);
@@ -398,59 +374,72 @@ wire        csr;
 wire        csr_we;
 wire [13:0] csr_num;
 wire [31:0] csr_wmask;
+wire [31:0] null32;
+wire        excptstore;
+wire [ 5:0] ecodestore;
 wire        exception;
 wire [ 5:0] ecode;
 wire [14:0] syscall_code;
-wire        IDU_ertn_flush;
+wire        idErtnFlush;
 wire        csr_raw;
+reg  [ 6:0] preciseExcptReg;    // to keep precise exception info
 assign csr          = inst_csrrd | inst_csrwr | inst_csrxchg | inst_rdcntid_w;  // consider rdcntid as csr instruction, for it needs to read tid.csr
 assign csr_we       = inst_csrwr | inst_csrxchg;
 assign csr_num      = inst_rdcntid_w ? 14'h40 : inst[23:10];
 assign csr_wmask    = inst_csrxchg ? rj_value : 32'hffffffff;
-assign exception  = inst_break | inst_syscall | isadef | ine;
-assign ecode      = isadef      ? `ECODE_ADE :
+assign null32       = 32'b0;
+assign exception  = excptstore | inst_syscall | inst_break | ine;
+assign ecode      = excptstore  ? ecodestore :
                     inst_syscall? `ECODE_SYS :
                     inst_break  ? `ECODE_BRK :
                     ine         ? `ECODE_INE :
                                   `ECODE_INT ;
 assign syscall_code = inst[14:0];
-assign IDU_ertn_flush = inst_ertn;
-
-assign IDU_to_EXU_csr_signals = {
+assign idErtnFlush  = inst_ertn;
+assign id2exCsrBus = {
     csr,            // [0]
     csr_we,         // [1]
     csr_num,        // [15:2]
     csr_wmask,      // [47:16]
-    exception,      // [48]
-    ecode,          // [54:49]
-    syscall_code,   // [69:55]
-    IDU_ertn_flush  // [70]
+    null32,         // [79:48]
+    exception,      // [80]
+    ecode,          // [86:81]
+    syscall_code,   // [101:87]
+    idErtnFlush     // [102]
 };
+assign {excptstore, ecodestore} = preciseExcptReg;
+always @(posedge clk) begin
+    if (reset) begin
+        preciseExcptReg <= 7'b0;    // to keep precise exception info
+    end
+    else if(idValidout && exAllowin) begin
+        preciseExcptReg <= {isintr | isadef,
+                            isintr ? `ECODE_INT :
+                            isadef ? `ECODE_ADE : `ECODE_INT};   // to keep precise exception info
+    end
+end
 assign csr_raw = EXU_csr && (rf1_raw_exu || rf2_raw_exu) 
-              || MEM_csr && (rf1_raw_mem || rf2_raw_mem) 
-              || WB_csr  && (rf1_raw_wb  || rf2_raw_wb);
+            || MEM_csr && (rf1_raw_mem || rf2_raw_mem) 
+            || WB_csr  && (rf1_raw_wb  || rf2_raw_wb);
 ///////////////////////////////////////////////////////////////////////
 //////               signals to IFU concerning branch           ///////
 ///////////////////////////////////////////////////////////////////////
 assign br_taken = (   inst_beq  &&  rj_eq_rd
-                   || inst_bne  && !rj_eq_rd
-                   || inst_blt  &&  rj_lt_rd
-                   || inst_bge  && !rj_lt_rd
-                   || inst_bltu &&  rj_ltu_rd
-                   || inst_bgeu && !rj_ltu_rd
-                   || inst_jirl
-                   || inst_bl
-                   || inst_b
-                  ) && ID_valid;
-assign br_taken_cancel = !IDU_ready_go ? 1'b0 : br_taken; // ID_valid is used
+                || inst_bne  && !rj_eq_rd
+                || inst_blt  &&  rj_lt_rd
+                || inst_bge  && !rj_lt_rd
+                || inst_bltu &&  rj_ltu_rd
+                || inst_bgeu && !rj_ltu_rd
+                || inst_jirl
+                || inst_bl
+                || inst_b
+                ) && idValidReg;
+assign br_taken_cancel = !idReadygo ? 1'b0 : br_taken; // idValidReg is used
 assign br_target = (inst_beq || inst_bne ||
                     inst_blt || inst_bge ||
                     inst_bltu || inst_bgeu ||
                     inst_bl || inst_b) ? (pc + br_offs) :
-                           /*inst_jirl*/ (rj_value + jirl_offs);
-assign IDU_br_taken_cancel  = br_taken_cancel;
-assign IDU_br_taken  = br_taken;
-assign IDU_br_target = br_target;
+                        /*inst_jirl*/ (rj_value + jirl_offs);
 
 ///////////////////////////////////////////////////////////////////////
 //////                 signals to EXU concerning ALU            ///////
@@ -458,26 +447,26 @@ assign IDU_br_target = br_target;
 assign src1_is_pc    = inst_jirl | inst_bl | inst_pcaddu12i;
 
 assign src2_is_imm   = inst_slli_w |
-                       inst_srli_w |
-                       inst_srai_w |
-                       inst_addi_w |
-                       inst_slti   |
-                       inst_sltui  |
-                       inst_andi   |
-                       inst_ori    |
-                       inst_xori   |
-                       inst_ld_w   |
-                       inst_ld_h   |
-                       inst_ld_b   |
-                       inst_ld_hu  |
-                       inst_ld_bu  |
-                       inst_st_w   |
-                       inst_st_h   |
-                       inst_st_b   |
-                       inst_lu12i_w|
-                       inst_pcaddu12i|
-                       inst_jirl   |
-                       inst_bl     ;
+                    inst_srli_w |
+                    inst_srai_w |
+                    inst_addi_w |
+                    inst_slti   |
+                    inst_sltui  |
+                    inst_andi   |
+                    inst_ori    |
+                    inst_xori   |
+                    inst_ld_w   |
+                    inst_ld_h   |
+                    inst_ld_b   |
+                    inst_ld_hu  |
+                    inst_ld_bu  |
+                    inst_st_w   |
+                    inst_st_h   |
+                    inst_st_b   |
+                    inst_lu12i_w|
+                    inst_pcaddu12i|
+                    inst_jirl   |
+                    inst_bl     ;
 
 assign alu_op[ 0] = inst_add_w | inst_addi_w |
                     inst_ld_w | inst_ld_h | inst_ld_b | inst_ld_hu | inst_ld_bu |
@@ -499,22 +488,22 @@ assign alu_op[13] = inst_mulh_w;
 assign alu_op[14] = inst_mulh_wu;
 
 assign imm = src2_is_4 ? 32'h4                      :
-             need_si20 ? {i20[19:0], 12'b0}         :
-             need_ui5  ? {27'b0,rk[4:0]}            :   
-             need_si12 ? {{20{i12[11]}}, i12[11:0]} : 
-             need_ui12 ? {20'b0, i12[11:0]}         :  
-             32'b0 ;
+            need_si20 ? {i20[19:0], 12'b0}         :
+            need_ui5  ? {27'b0,rk[4:0]}            :   
+            need_si12 ? {{20{i12[11]}}, i12[11:0]} : 
+            need_ui12 ? {20'b0, i12[11:0]}         :  
+            32'b0 ;
 
 assign rj_value  = rf1_raw_exu ? EXU_to_ID_forward 
-                 : rf1_raw_mem ? MEM_to_ID_forward 
-                 : rf1_raw_wb  ? WB_to_ID_forward  
-                 : rf_rdata1;
+                : rf1_raw_mem ? MEM_to_ID_forward 
+                : rf1_raw_wb  ? WB_to_ID_forward  
+                : rf_rdata1;
 assign rkd_value = rf2_raw_exu ? EXU_to_ID_forward 
-                 : rf2_raw_mem ? MEM_to_ID_forward 
-                 : rf2_raw_wb  ? WB_to_ID_forward  
-                 : rf_rdata2;
+                : rf2_raw_mem ? MEM_to_ID_forward 
+                : rf2_raw_wb  ? WB_to_ID_forward  
+                : rf_rdata2;
 
-assign IDU_to_EX_ALU_signals = {
+assign id2exALUBus = {
     rj_value,      // [31:0]
     rkd_value,     // [63:32]
     imm,           // [95:64]
@@ -533,7 +522,7 @@ assign div_op[0] = inst_div_w;
 assign div_op[1] = inst_mod_w;
 assign div_op[2] = inst_div_wu;
 assign div_op[3] = inst_mod_wu;
-assign IDU_to_EX_div_signals = {
+assign id2exDivBus = {
     use_div,    // [4]
     div_op      // [3:0]
 };
@@ -541,23 +530,23 @@ assign IDU_to_EX_div_signals = {
 ////////////////////////////////////////////////////////////////////////
 //////                      other signals to EXU                 ///////
 ////////////////////////////////////////////////////////////////////////
-assign IDU_pc_to_EXU   = pc;
-assign IDU_inst_to_EXU = inst;
+assign id2exPC   = pc;
+assign id2exInst = inst;
 
 assign res_from_mem  = {inst_ld_w, inst_ld_h, inst_ld_b, inst_ld_hu, inst_ld_bu};
 
 assign gr_we         = ~(inst_st_w | inst_st_h | inst_st_b |
-                         inst_beq | inst_bne |
-                         inst_blt | inst_bge |
-                         inst_bltu | inst_bgeu | inst_b |
-                         inst_ertn |
-                         inst_break | inst_syscall |
-                         ine);  // inst exception doesn't write register
+                        inst_beq | inst_bne |
+                        inst_blt | inst_bge |
+                        inst_bltu | inst_bgeu | inst_b |
+                        inst_ertn |
+                        inst_break | inst_syscall |
+                        ine);  // inst exception doesn't write register
 assign mem_we        = {inst_st_w, inst_st_h, inst_st_b};
 assign dest          = dst_is_r1 ? 5'd1 : 
-                       inst_rdcntid_w ? rj : rd;    // special case for rdcntid.w
+                    inst_rdcntid_w ? rj : rd;    // special case for rdcntid.w
 
-assign IDU_to_EX_pass_signals = {
+assign id2exPassBus = {
     res_from_mem,   // [4:0]
     gr_we,          // [5]
     mem_we,         // [8:6]
@@ -573,22 +562,22 @@ assign rf_raddr1 = rj;
 assign rf_raddr2 = src_reg_is_rd ? rd : rk;
 
 // ID status
-always @(posedge clk ) begin
+always @(posedge clk) begin
     if (reset) begin
-        ID_valid <= 1'b0;
+        idValidReg <= 1'b0;
     end
-    else if(br_taken_cancel)begin
-        ID_valid <= 1'b0;
+    else if(br_taken_cancel | wb_ex | ertn_flush)begin
+        idValidReg <= 1'b0;
     end
-    else if(IDU_allow_in) begin
-        ID_valid <= IFU_to_IDU_valid;
+    else if(idAllowin) begin
+        idValidReg <= ifValidout;
     end
 end
-wire block;
-assign block = !ertn_flush && !wb_ex && !has_int && ((EXU_current_is_ld && EXU_raw) || csr_raw);
+wire   block;
+assign block = !ertn_flush && !wb_ex && ((EXU_current_is_ld && EXU_raw) || csr_raw);
 
-assign IDU_to_EXU_valid  = ID_valid && IDU_ready_go;
-assign IDU_ready_go      = !block;
-assign IDU_allow_in      = !ID_valid || (IDU_ready_go && EXU_allow_in);
+assign idValidout =  idValidReg && idReadygo;
+assign idReadygo  = !block;
+assign idAllowin  = !idValidReg || (idReadygo && exAllowin);
 
 endmodule

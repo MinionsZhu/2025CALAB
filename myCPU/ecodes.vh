@@ -1,3 +1,11 @@
+`ifndef ECODES_VH
+`define ECODES_VH
+
+`define ECODEL  5:0
+`define ECODEW  6
+`define ESUBCODEL 8:0
+`define ESUBCODEW 9
+
 `define    ECODE_INT    6'h00   // interrupt (exception)
 `define    ECODE_PIL    6'h01   // load page invalid exception
 `define    ECODE_PIS    6'h02   // store page invalid exception
@@ -20,3 +28,5 @@
 
 `define ESUBCODE_ADEF   9'h000  // address error on fetch
 `define ESUBCODE_ADEM   9'h001  // address error on load/store
+
+`endif // ECODES_VH

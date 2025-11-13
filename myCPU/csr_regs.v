@@ -1,10 +1,11 @@
+`include "busdef.vh"
 `include "csr.vh"
 `include "ecodes.vh"
 module csr_regs (
     input           clk,
     input           reset,
 
-    input   [`CSR_NUM_WIDTH-1:0] csr_num,
+    input [`CSRNUML] csr_num,
 
     input           csr_re,
     input           csr_we,
@@ -22,7 +23,7 @@ module csr_regs (
     input   [31:0]  wb_vaddr,
     input   [31:0]  coreid_in,
 
-    output          has_int,
+    output          isintr, // to IDU
     input   [ 7:0]  hw_int_in,
     input           ipi_int_in
 );
@@ -69,7 +70,7 @@ module csr_regs (
             csr_crmd_plv <= 2'b0;
             csr_crmd_ie  <= 1'b0;
         end
-        else if(wb_ex | has_int) begin
+        else if(wb_ex) begin
             csr_crmd_plv <= 2'b0;
             csr_crmd_ie  <= 1'b0;
         end
@@ -95,7 +96,7 @@ module csr_regs (
     end
     // PRMD
     always @(posedge clk) begin
-        if(wb_ex | has_int) begin
+        if(wb_ex) begin
             csr_prmd_pplv <= csr_crmd_plv;
             csr_prmd_pie  <= csr_crmd_ie;
         end
@@ -138,15 +139,15 @@ module csr_regs (
         csr_estat_is[12]  <= ipi_int_in;
     end
     always @(posedge clk) begin
-        if(wb_ex | has_int) begin
+        if(wb_ex) begin
             csr_estat_ecode    <= wb_ecode;
             csr_estat_esubcode <= wb_esubcode;
         end
     end
     // ERA
     always @(posedge clk) begin
-        if(wb_ex | has_int) begin
-            csr_era_pc <= wb_pc;
+        if(wb_ex) begin
+            csr_era_pc <= wb_pc;    // inst which attached with exception won't be executed before eret
         end
         else if(csr_we && (csr_num == `CSR_ERA)) begin
             csr_era_pc <=  csr_wmask[`CSR_ERA_PC]&csr_wvalue[`CSR_ERA_PC]
@@ -279,32 +280,8 @@ module csr_regs (
                         32'b0;  // contains ticlr
     assign ertn_pc  = csr_era_pc;
     assign ex_entry = {csr_eentry_va, 6'b0};
-    // interrupt pending
-    reg  intr_delay;
-    reg  pulse_out;
-    wire intr_in;
-    assign intr_in = (csr_estat_is[12:0] & csr_ecfg_lie[12:0]) != 12'b0 && csr_crmd_ie;
-    always @(posedge clk) begin
-        if (reset) begin
-            intr_delay <= 1'b0;
-        end
-        else begin
-            intr_delay <= intr_in;
-        end
-    end
-    always @(posedge clk) begin
-        if (reset) begin
-            pulse_out  <= 1'b0;
-        end
-        else begin
-            if (intr_in == 1'b1 && intr_delay == 1'b0) begin
-                pulse_out <= 1'b1;
-            end
-            else begin
-                pulse_out <= 1'b0;
-            end
-        end
-    end
-    assign has_int = pulse_out;
+
+    // interrupt generation
+    assign isintr = (csr_estat_is[12:0] & csr_ecfg_lie[12:0]) != 12'b0 && csr_crmd_ie;
 
 endmodule

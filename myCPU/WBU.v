@@ -1,20 +1,21 @@
+`include "busdef.vh"
 module WBU(
     input  wire        clk,
     input  wire        reset,
+
     // handshaking signals with MEM
-    input  wire        MEM_to_WB_valid,
-    output wire        WB_allow_in,
-    // handshaking signals with outside (not implemented)
-    output wire        WB_ready_go,
-    output wire        WB_to_out_valid,
+    input  wire        memValidout,
+    output wire        wbAllowin,
+    // // handshaking signals with outside (not implemented), doesn't need now
+    // output wire        wbValidout,
 
     // data from MEM
-    input  wire[102:0] MEM_csr_signals_to_WB,
-    input  wire [31:0] MEM_pc_to_WB,
-    input  wire [31:0] MEM_inst_to_WB,
-    input  wire [31:0] MEM_result_to_WB,
-    input  wire [ 5:0] MEM_signals_pass_to_WB,
-    input  wire [31:0] MEM_memvaddr_to_WB,
+    input  wire [31:0] mem2wbPC,
+    input  wire [31:0] mem2wbInst,
+    input  wire [31:0] mem2wbResult,
+    input  wire [31:0] mem2wbMemvaddr,
+    input  wire [`CSRBUSL] mem2wbCsrBus,
+    input  wire [`MEMPASSBUSL] mem2wbPassBus,
 
     // register file interface
     output wire [ 4:0] rf_waddr,
@@ -47,18 +48,15 @@ module WBU(
     output wire [ 5:0] wb_ecode,
     output wire [ 8:0] wb_esubcode,
     output wire [31:0] wb_vaddr,
-
-    // special solution
-    input  wire [31:0] adefpc
 );
-reg [102:0] csr_signals_reg;
 
-reg         WB_valid;
+reg [`CSRBUSL] csr_signals_reg;
+
+reg         wbValidReg;
 reg [ 31:0] inst_reg;
 reg [ 31:0] pc_reg;
 reg [ 31:0] result_reg;
-reg [  5:0] signals_pass_reg;
-reg [ 31:0] adefpc_reg;
+reg [`MEMPASSBUSL] signals_pass_reg;
 reg [ 31:0] MEM_memvaddr_to_WB_reg;
 
 wire [31:0] pc;
@@ -80,10 +78,10 @@ wire        WBU_ertn_flush;
 
 always @(posedge clk) begin
     if (reset) begin
-        csr_signals_reg <= 103'b0;
+        csr_signals_reg <= `CSRBUSW'b0;
     end
-    else if (WB_allow_in && MEM_to_WB_valid) begin
-        csr_signals_reg <= MEM_csr_signals_to_WB;
+    else if (wbAllowin && memValidout) begin
+        csr_signals_reg <= mem2wbCsrBus;
     end
 end
 
@@ -91,51 +89,40 @@ always @(posedge clk) begin
     if (reset) begin
         inst_reg <= 32'b0;
     end
-    else if (WB_allow_in && MEM_to_WB_valid) begin
-        inst_reg <= MEM_inst_to_WB;
+    else if (wbAllowin && memValidout) begin
+        inst_reg <= mem2wbInst;
     end
 end
 always @(posedge clk) begin
     if (reset) begin
         pc_reg <= 32'b0;
     end
-    else if (WB_allow_in && MEM_to_WB_valid) begin
-        pc_reg <= MEM_pc_to_WB;
-    end
-end
-always @(posedge clk) begin
-    if (reset) begin
-        adefpc_reg <= 32'b0;
-    end
-    else if (WB_allow_in && MEM_to_WB_valid && adefpc_reg == 32'b0) begin
-        adefpc_reg <= adefpc;
-    end
-    else if (WBU_ecode == 6'h08) begin
-        adefpc_reg <= 32'b0;
+    else if (wbAllowin && memValidout) begin
+        pc_reg <= mem2wbPC;
     end
 end
 always @(posedge clk) begin
     if (reset) begin
         MEM_memvaddr_to_WB_reg <= 32'b0;
     end
-    else if (WB_allow_in && MEM_to_WB_valid) begin
-        MEM_memvaddr_to_WB_reg <= MEM_memvaddr_to_WB;
+    else if (wbAllowin && memValidout) begin
+        MEM_memvaddr_to_WB_reg <= mem2wbMemvaddr;
     end
 end
 always @(posedge clk) begin
     if (reset) begin
         result_reg <= 32'b0;
     end
-    else if (WB_allow_in && MEM_to_WB_valid) begin
-        result_reg <= MEM_result_to_WB;
+    else if (wbAllowin && memValidout) begin
+        result_reg <= mem2wbResult;
     end
 end
 always @(posedge clk) begin
     if (reset) begin
-        signals_pass_reg <= 6'b0;
+        signals_pass_reg <= `MEMPASSBUSW'b0;
     end
-    else if (WB_allow_in && MEM_to_WB_valid) begin
-        signals_pass_reg <= MEM_signals_pass_to_WB;
+    else if (wbAllowin && memValidout) begin
+        signals_pass_reg <= mem2wbPassBus;
     end
 end
 assign pc = pc_reg;
@@ -146,21 +133,21 @@ assign gr_we = signals_pass[5];
 assign dest = signals_pass[4:0];
 assign rf_waddr = dest;
 assign rf_wdata = WBU_csr ? csr_rvalue : result;
-assign rf_we = gr_we & WB_valid & (WBU_ecode != 6'h09);
+assign rf_we = gr_we & wbValidReg & ~WBU_exception;
 
 // to IDU
 assign WB_to_IDU_gr_we = gr_we;
 assign WB_to_IDU_dest  = dest;
-assign WB_to_IDU_valid = WB_valid;
+assign WB_to_IDU_valid = wbValidReg;
 assign WB_to_IDU_forward = rf_wdata;
 
 // WB status
 always @(posedge clk ) begin
     if (reset) begin
-        WB_valid <= 1'b0;
+        wbValidReg <= 1'b0;
     end
-    else if(WB_allow_in)begin
-        WB_valid <= MEM_to_WB_valid;
+    else if(wbAllowin)begin
+        wbValidReg <= memValidout;
     end
 end
 
@@ -171,7 +158,7 @@ assign csr_we = WBU_csr_we;
 assign csr_num = WBU_csr_num;
 assign csr_wmask = WBU_csr_wmask;
 assign csr_wvalue = WBU_csr_wvalue;
-assign wb_pc = (WBU_ecode == 6'h08) ? adefpc_reg : pc;  // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
+assign wb_pc = pc;
 assign ertn_flush = WBU_ertn_flush;
 assign wb_ex = WBU_exception;
 assign wb_ecode = WBU_ecode;
@@ -179,9 +166,9 @@ assign wb_esubcode = 9'h0;  // now there is no ADEM exception.
 assign WB_to_IDU_csr = WBU_csr;
 assign wb_vaddr = MEM_memvaddr_to_WB_reg;
 
-assign WB_ready_go      = 1'b1;
-assign WB_to_out_valid  = WB_valid && WB_ready_go;
-assign WB_allow_in      = !WB_valid || (WB_ready_go && WB_to_out_valid);
+assign wbReadygo      = 1'b1;
+assign wbValidout     = wbValidReg && wbReadygo;
+assign wbAllowin      = !wbValidReg || (wbReadygo && wbValidout);
 
 assign debug_pc       = pc;
 assign debug_rf_we    = {4{rf_we}};

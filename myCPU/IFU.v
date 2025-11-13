@@ -1,10 +1,12 @@
+`include "busdef.vh"
 module IFU(
     input  wire        clk,
     input  wire        reset,
+
     // ie
     input  wire        wb_ex,
     input  wire        ertn_flush,
-    input  wire        has_int,
+
     // pc from csr
     input  wire [31:0] ex_entry,
     input  wire [31:0] ertn_pc,
@@ -16,72 +18,84 @@ module IFU(
     output wire [31:0] inst_sram_wdata,
     input  wire [31:0] inst_sram_rdata,
 
-    // to IDU
-    //output wire [31:0] seq_pc,
-    output wire [31:0] inst_to_IDU,
-    output wire [31:0] pc_to_IDU,
-    output wire        isadef,      // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
-    output wire        beingexcept, // is being excepted
+    // from IDU
     input  wire        br_taken,
     input  wire        br_taken_cancel,
     input  wire [31:0] br_target,
 
+    // to IDU
+    output wire [31:0] if2idInst,
+    output wire [31:0] if2idPC,
+    output wire        isadef,      // ADEF exception, attached to inst
+
     // handshaking signals with IDU
-    input  wire        IDU_allow_in,
-    output wire        IFU_to_IDU_valid,
-    output wire        IFU_ready_go
+    input  wire        idAllowin,
+    output wire        ifValidout
 );
     // preif stage
-    wire preIF_to_IF_valid;
-    reg  IFU_valid;
-    wire IFU_allow_in;
+    reg         ifValidReg;
+    wire        preifValidout;
+    wire        ifAllowin;
 
     reg  [31:0] pc;
     wire [31:0] seq_pc;
     wire [31:0] nextpc;
 
+    // ADEF exception
+    reg         regAdef;
+
     // inst sram interface
-    assign inst_sram_en = preIF_to_IF_valid && IDU_allow_in;
-    assign inst_sram_we = 4'b0;
-    assign inst_sram_addr = nextpc;
+    assign inst_sram_en    = preifValidout && idAllowin;
+    assign inst_sram_we    = 4'b0;
+    assign inst_sram_addr  = {nextpc[31:2], 2'b0};  // word aligned to avoid unaligned access
     assign inst_sram_wdata = 32'b0;
 
-    assign isadef = ~(pc[1:0] == 2'b0); // check current pc alignment
-    
+    // ADEF exception register
+    always @(posedge clk) begin
+        if (reset) begin
+            regAdef <= 1'b0;
+        end
+        else if (ifAllowin) begin
+            regAdef <= ~(nextpc[1:0] == 2'b0);
+        end
+        // need not clear because although adef passed to id, it still blocked/disabled by valid signal
+    end
+    assign isadef = regAdef; // check current pc alignment
+
     // IF status
     always @(posedge clk) begin
         if (reset) begin
-            IFU_valid <= 1'b0;
+            ifValidReg <= 1'b0;
         end
-        else if (IFU_allow_in) begin
-            IFU_valid <= preIF_to_IF_valid;
+        else if (ifAllowin) begin
+            ifValidReg <= preifValidout;
         end
-        else if(br_taken_cancel) begin
-            IFU_valid <= 1'b0;
+        else if(br_taken_cancel | wb_ex | ertn_flush) begin  // 例外时和例外返回时都需要清空，此处待做
+            ifValidReg <= 1'b0;
         end
     end
-    assign preIF_to_IF_valid = !reset;
-    assign IFU_ready_go = 1'b1;
-    assign IFU_to_IDU_valid = IFU_valid && IFU_ready_go;
-    assign IFU_allow_in = !IFU_valid || (IFU_ready_go && IDU_allow_in);
+    assign preifValidout = !reset;
+    assign ifReadygo     =  1'b1;
+    assign ifValidout    =  ifValidReg &&  ifReadygo;
+    assign ifAllowin     = !ifValidReg || (ifReadygo && idAllowin);
     
     // pc register & output to IDU
     assign seq_pc = pc + 4;
-    assign beingexcept = has_int || wb_ex;
-    assign nextpc = (beingexcept) ? ex_entry
+    assign nextpc = (wb_ex)    ? ex_entry
                   : ertn_flush ? ertn_pc
-                  : br_taken ? br_target
+                  : br_taken   ? br_target
                   : seq_pc;
+
     always @(posedge clk) begin
         if (reset) begin
             pc <= 32'h1bfffffc;
         end
-        else if (preIF_to_IF_valid && IFU_allow_in) begin
+        else if (preifValidout && ifAllowin) begin
             pc <= nextpc;
         end
     end
 
-    assign inst_to_IDU = inst_sram_rdata;
-    assign pc_to_IDU = pc;
+    assign if2idInst = inst_sram_rdata;
+    assign if2idPC   = pc;
 
 endmodule

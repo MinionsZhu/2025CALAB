@@ -1,3 +1,4 @@
+`include "busdef.vh"
 module mycpu_top(
     input  wire        clk,
     input  wire        resetn,
@@ -22,13 +23,11 @@ module mycpu_top(
 wire        reset;
 assign      reset = ~resetn;
 
-wire        IDU_allow_in;
-wire        IFU_to_IDU_valid;
-wire        IFU_ready_go;
-wire [31:0] inst_to_IDU;
-wire [31:0] pc_to_IDU;
+wire        idAllowin;
+wire        ifValidout;
+wire [31:0] if2idInst;
+wire [31:0] if2idPC;
 wire        isadef;
-wire        beingexcept;
 wire        br_taken_cancel;
 wire        br_taken;
 wire [31:0] br_target;
@@ -48,13 +47,13 @@ wire [ 5:0] wb_ecode;
 wire [ 8:0] wb_esubcode;
 wire [31:0] wb_vaddr;
 wire [31:0] coreid_in;
-wire        has_int;
+wire        isintr;
 wire [ 7:0] hw_int_in;
 wire        ipi_int_in;
 
-assign hw_int_in = 8'b0;
+assign hw_int_in  = 8'b0;
 assign ipi_int_in = 1'b0;
-assign coreid_in = 32'b0;
+assign coreid_in  = 32'b0;
 
 IFU u_IFU(
     .clk            (clk            ),
@@ -62,7 +61,6 @@ IFU u_IFU(
     // ie
     .wb_ex          (wb_ex          ),
     .ertn_flush     (ertn_flush     ),
-    .has_int        (has_int        ),
     // pc from csr
     .ex_entry       (ex_entry       ),
     .ertn_pc        (ertn_pc        ),
@@ -72,31 +70,31 @@ IFU u_IFU(
     .inst_sram_addr (inst_sram_addr ),
     .inst_sram_wdata(inst_sram_wdata),
     .inst_sram_rdata(inst_sram_rdata),
-    // to IDU
-    .inst_to_IDU    (inst_to_IDU    ),
-    .pc_to_IDU      (pc_to_IDU      ),
-    .isadef         (isadef         ),      // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
-    .beingexcept    (beingexcept    ),
+    // from IDU
+    .br_taken       (br_taken       ),
     .br_taken_cancel(br_taken_cancel),
     .br_target      (br_target      ),
-    .br_taken       (br_taken       ),
+    // to IDU
+    .if2idInst      (if2idInst      ),
+    .if2idPC        (if2idPC        ),
+    .isadef         (isadef         ),      // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
     // handshaking signals with IDU
-    .IDU_allow_in   (IDU_allow_in   ),
-    .IFU_to_IDU_valid(IFU_to_IDU_valid),
-    .IFU_ready_go   (IFU_ready_go   )
+    .idAllowin      (idAllowin      ),
+    .ifValidout     (ifValidout     )
 );
 
-wire        EXU_allow_in;
-wire        IDU_to_EXU_valid;
-wire        IDU_ready_go;
-wire [31:0] IDU_pc_to_EXU;
-wire [31:0] IDU_inst_to_EXU;
-wire [112:0]IDU_to_EX_ALU_signals;
-wire [15:0] IDU_to_EX_pass_signals;
+wire        exAllowin;
+wire        idValidout;
+wire [31:0] id2exPC;
+wire [31:0] id2exInst;
+wire [`ALUBUSL]id2exALUBus;
+wire [`IDPASSBUSL] id2exPassBus;
+
 wire [ 4:0] rf_raddr1;
 wire [ 4:0] rf_raddr2;
 wire [31:0] rf_rdata1;
 wire [31:0] rf_rdata2;
+
 wire        EXU_to_IDU_gr_we;
 wire [ 4:0] EXU_to_IDU_dest;
 wire        EXU_to_IDU_valid;
@@ -110,8 +108,10 @@ wire        WB_to_IDU_gr_we;
 wire [ 4:0] WB_to_IDU_dest;
 wire        WB_to_IDU_valid;
 wire [31:0] WB_to_IDU_forward;
-wire [ 4:0] IDU_to_EX_div_signals;
-wire [70:0] IDU_to_EXU_csr_signals;
+
+wire [ 4:0] id2exDivBus;
+wire [`CSRBUSL] id2exCsrBus;
+
 wire        EXU_csr;
 wire        MEM_csr;
 wire        WB_csr;
@@ -122,30 +122,28 @@ IDU u_IDU(
     // ie
     .wb_ex             (wb_ex              ),
     .ertn_flush        (ertn_flush         ),
-    .has_int           (has_int            ),
+    .isintr            (isintr             ),
     // from IFU
-    .pc_from_IFU       (pc_to_IDU          ),
-    .inst_from_IFU     (inst_to_IDU        ),
+    .pc_from_IFU       (if2idPC            ),
+    .inst_from_IFU     (if2idInst          ),
     .isadef            (isadef             ),   // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
-    .beingexcept       (beingexcept        ),
     // to IFU
-    .IDU_br_taken      (br_taken           ),
-    .IDU_br_taken_cancel(br_taken_cancel   ),
-    .IDU_br_target     (br_target          ),
+    .br_taken          (br_taken           ),
+    .br_taken_cancel   (br_taken_cancel    ),
+    .br_target         (br_target          ),
     // handshaking signals with IFU
-    .IFU_to_IDU_valid  (IFU_to_IDU_valid   ),
-    .IDU_allow_in      (IDU_allow_in       ),
+    .ifValidout        (ifValidout         ),
+    .idAllowin         (idAllowin          ),
     // handshaking signals with EXU
-    .EXU_allow_in      (EXU_allow_in       ),
-    .IDU_ready_go      (IDU_ready_go       ),
-    .IDU_to_EXU_valid  (IDU_to_EXU_valid   ),
+    .exAllowin         (exAllowin          ),
+    .idValidout        (idValidout         ),
     // signals and data to EXU
-    .IDU_to_EXU_csr_signals (IDU_to_EXU_csr_signals),
-    .IDU_pc_to_EXU     (IDU_pc_to_EXU      ),
-    .IDU_inst_to_EXU   (IDU_inst_to_EXU    ),
-    .IDU_to_EX_ALU_signals(IDU_to_EX_ALU_signals),
-    .IDU_to_EX_pass_signals(IDU_to_EX_pass_signals),
-    .IDU_to_EX_div_signals (IDU_to_EX_div_signals ),
+    .id2exCsrBus       (id2exCsrBus        ),
+    .id2exPC           (id2exPC            ),
+    .id2exInst         (id2exInst          ),
+    .id2exALUBus       (id2exALUBus        ),
+    .id2exPassBus      (id2exPassBus       ),
+    .id2exDivBus       (id2exDivBus        ),
     // forwarding from EXU/MEMU/WBU
     .EXU_gr_we         (EXU_to_IDU_gr_we   ),
     .EXU_dest          (EXU_to_IDU_dest    ),
@@ -170,86 +168,80 @@ IDU u_IDU(
     .rf_rdata2         (rf_rdata2          )
 );
 
-wire        MEM_allow_in;
-wire        EXU_ready_go;
-wire        EXU_to_MEM_valid;
-wire [31:0] EXU_pc_to_MEM;
-wire [31:0] EXU_inst_to_MEM;
-wire [31:0] EXU_result_to_MEM;
-wire [12:0] EXU_signals_pass_to_MEM;
-wire        MEM_has_int;
-wire[102:0] EXU_csr_signals_to_MEM;
+wire        memAllowin;
+wire        exValidout;
+wire [31:0] ex2memPC;
+wire [31:0] ex2memInst;
+wire [31:0] ex2memResult;
+wire        memStopMemAccess;
+wire [`CSRBUSL] ex2memCsrBus;
+wire [`EXPASSBUSL] ex2memPassBus;
 EXU u_EXU(
-    .clk                    (clk                    ),
-    .reset                  (reset                  ),
+    .clk                    (clk                ),
+    .reset                  (reset              ),
     // ie
-    .has_int                (has_int                ),
-    .wb_ex                  (wb_ex                  ),
-    .ertn_flush             (ertn_flush             ),
+    .wb_ex                  (wb_ex              ),
+    .ertn_flush             (ertn_flush         ),
     // handshaking signals with IDU
-    .IDU_to_EXU_valid       (IDU_to_EXU_valid       ),
-    .EXU_allow_in           (EXU_allow_in           ),
+    .idValidout             (idValidout         ),
+    .exAllowin              (exAllowin          ),
     // handshaking signals with MEM
-    .MEM_allow_in           (MEM_allow_in           ),
-    .EXU_ready_go           (EXU_ready_go           ),
-    .EXU_to_MEM_valid       (EXU_to_MEM_valid       ),
+    .memAllowin             (memAllowin         ),
+    .exValidout             (exValidout         ),
     // data from IDU
-    .IDU_to_EXU_csr_signals (IDU_to_EXU_csr_signals ),
-    .IDU_pc_to_EXU          (IDU_pc_to_EXU          ),
-    .IDU_inst_to_EXU        (IDU_inst_to_EXU        ),
-    .IDU_to_EX_ALU_signals  (IDU_to_EX_ALU_signals  ),
-    .IDU_to_EX_pass_signals (IDU_to_EX_pass_signals ),
-    .IDU_to_EX_div_signals  (IDU_to_EX_div_signals  ),
+    .id2exCsrBus            (id2exCsrBus        ),
+    .id2exPC                (id2exPC            ),
+    .id2exInst              (id2exInst          ),
+    .id2exALUBus            (id2exALUBus        ),
+    .id2exPassBus           (id2exPassBus       ),
+    .id2exDivBus            (id2exDivBus        ),
     // to MEM
-    .EXU_csr_signals_to_MEM (EXU_csr_signals_to_MEM ),
-    .EXU_pc_to_MEM          (EXU_pc_to_MEM          ),
-    .EXU_inst_to_MEM        (EXU_inst_to_MEM        ),
-    .EXU_result_to_MEM      (EXU_result_to_MEM      ),
-    .EXU_signals_pass_to_MEM(EXU_signals_pass_to_MEM),
+    .ex2memCsrBus           (ex2memCsrBus       ),
+    .ex2memPC               (ex2memPC           ),
+    .ex2memInst             (ex2memInst         ),
+    .ex2memResult           (ex2memResult       ),
+    .ex2memPassBus          (ex2memPassBus      ),
     // data from MEM
-    .MEM_has_int            (MEM_has_int            ),
+    .memStopMemAccess       (memStopMemAccess   ),
     // to IDU
-    .EXU_to_IDU_csr         (EXU_csr                ),
-    .EXU_to_IDU_gr_we       (EXU_to_IDU_gr_we       ),
-    .EXU_to_IDU_dest        (EXU_to_IDU_dest        ),
-    .EXU_to_IDU_valid       (EXU_to_IDU_valid       ),
-    .EXU_to_IDU_forward     (EXU_to_IDU_forward     ),
-    .EXU_current_is_ld      (EXU_current_is_ld      ),
+    .EXU_to_IDU_csr         (EXU_csr            ),
+    .EXU_to_IDU_gr_we       (EXU_to_IDU_gr_we   ),
+    .EXU_to_IDU_dest        (EXU_to_IDU_dest    ),
+    .EXU_to_IDU_valid       (EXU_to_IDU_valid   ),
+    .EXU_to_IDU_forward     (EXU_to_IDU_forward ),
+    .EXU_current_is_ld      (EXU_current_is_ld  ),
     // data sram interface
-    .data_sram_en           (data_sram_en           ),
-    .data_sram_we           (data_sram_we           ),
-    .data_sram_addr         (data_sram_addr         ), 
-    .data_sram_wdata        (data_sram_wdata        )
+    .data_sram_en           (data_sram_en       ),
+    .data_sram_we           (data_sram_we       ),
+    .data_sram_addr         (data_sram_addr     ), 
+    .data_sram_wdata        (data_sram_wdata    )
 );
 
-wire        WB_allow_in;
-wire        MEM_ready_go;
-wire        MEM_to_WB_valid;
-wire [31:0] MEM_pc_to_WB;
-wire [31:0] MEM_inst_to_WB;
-wire [31:0] MEM_result_to_WB;
-wire [ 5:0] MEM_signals_pass_to_WB;
-wire[102:0] MEM_csr_signals_to_WB;
-wire [31:0] MEM_memvaddr_to_WB;
+wire        wbAllowin;
+wire        memValidout;
+wire [31:0] mem2wbPC;
+wire [31:0] mem2wbInst;
+wire [31:0] mem2wbResult;
+wire [31:0] mem2wbMemvaddr;
+wire [`CSRBUSL] mem2wbCsrBus;
+wire [`MEMPASSBUSL] mem2wbPassBus;
 MEMU u_MEMU(
     .clk                (clk                ),
     .reset              (reset              ),
-    .has_int            (has_int            ),
     .wb_ex              (wb_ex              ),
     .ertn_flush         (ertn_flush         ),
     // handshaking signals with EXU
-    .EXU_to_MEM_valid   (EXU_to_MEM_valid   ), 
-    .MEM_allow_in       (MEM_allow_in       ),
+    .exValidout         (exValidout         ), 
+    .memAllowin         (memAllowin         ),
     // handshaking signals with WB
-    .WB_allow_in        (WB_allow_in        ),
-    .MEM_ready_go       (MEM_ready_go       ),
-    .MEM_to_WB_valid    (MEM_to_WB_valid    ),
+    .wbAllowin          (wbAllowin          ),
+    .memValidout        (memValidout        ),
     // data from EXU
-    .EXU_csr_signals_to_MEM(EXU_csr_signals_to_MEM),
-    .EXU_pc_to_MEM      (EXU_pc_to_MEM      ),
-    .EXU_inst_to_MEM    (EXU_inst_to_MEM    ), 
-    .EXU_result_to_MEM  (EXU_result_to_MEM),
-    .EXU_signals_pass_to_MEM(EXU_signals_pass_to_MEM),
+    .ex2memCsrBus       (ex2memCsrBus       ),
+    .ex2memPC           (ex2memPC           ),
+    .ex2memInst         (ex2memInst         ), 
+    .ex2memResult       (ex2memResult       ),
+    .ex2memPassBus      (ex2memPassBus      ),
     // data from data sram
     .data_sram_rdata    (data_sram_rdata    ),
     // to IDU
@@ -259,68 +251,62 @@ MEMU u_MEMU(
     .MEM_to_IDU_valid   (MEM_to_IDU_valid   ),
     .MEM_to_IDU_forward (MEM_to_IDU_forward ),
     // to EXU
-    .MEM_has_int        (MEM_has_int        ),
+    .memStopMemAccess   (memStopMemAccess   ),
     // data to WB
-    .MEM_csr_signals_to_WB(MEM_csr_signals_to_WB),
-    .MEM_pc_to_WB       (MEM_pc_to_WB       ),
-    .MEM_inst_to_WB     (MEM_inst_to_WB     ),
-    .MEM_result_to_WB   (MEM_result_to_WB   ),
-    .MEM_signals_pass_to_WB(MEM_signals_pass_to_WB),
-    .MEM_memvaddr_to_WB (MEM_memvaddr_to_WB )
+    .mem2wbMemvaddr     (mem2wbMemvaddr     ),
+    .mem2wbPC           (mem2wbPC           ),
+    .mem2wbInst         (mem2wbInst         ),
+    .mem2wbResult       (mem2wbResult       ),
+    .mem2wbPassBus      (mem2wbPassBus      ),
+    .mem2wbCsrBus       (mem2wbCsrBus       )
 );
 
-wire        WB_ready_go;
-wire        WB_to_out_valid;
 wire [ 4:0] rf_waddr;
 wire [31:0] rf_wdata;
 wire        rf_we;
-wire [31:0] adefpc;
-assign adefpc = isadef ? pc_to_IDU : 32'b0;
 WBU u_WBU(
-    .clk               (clk                ),
-    .reset             (reset              ),
+    .clk                (clk                ),
+    .reset              (reset              ),
     // handshaking signals with MEM
-    .MEM_to_WB_valid   (MEM_to_WB_valid    ),
-    .WB_allow_in       (WB_allow_in        ),
-    // handshaking signals with outside (not implemented)
-    .WB_ready_go       (WB_ready_go        ),
-    .WB_to_out_valid   (WB_to_out_valid    ),
+    .memValidout        (memValidout        ),
+    .wbAllowin          (wbAllowin          ),
+    // // handshaking signals with outside (not implemented)
+    // .WB_to_out_valid    (WB_to_out_valid    ),
     // data from MEM
-    .MEM_csr_signals_to_WB(MEM_csr_signals_to_WB),
-    .MEM_pc_to_WB      (MEM_pc_to_WB       ),
-    .MEM_inst_to_WB    (MEM_inst_to_WB     ),
-    .MEM_result_to_WB  (MEM_result_to_WB   ),
-    .MEM_signals_pass_to_WB(MEM_signals_pass_to_WB),
-    .MEM_memvaddr_to_WB(MEM_memvaddr_to_WB ),
+    .mem2wbMemvaddr     (mem2wbMemvaddr     ),
+    .mem2wbPC           (mem2wbPC           ),
+    .mem2wbInst         (mem2wbInst         ),
+    .mem2wbResult       (mem2wbResult       ),
+    .mem2wbPassBus      (mem2wbPassBus      ),
+    .mem2wbCsrBus       (mem2wbCsrBus       ),
     // to IDU
-    .WB_to_IDU_csr     (WB_csr             ),
-    .WB_to_IDU_gr_we   (WB_to_IDU_gr_we    ),
-    .WB_to_IDU_dest    (WB_to_IDU_dest     ),
-    .WB_to_IDU_valid   (WB_to_IDU_valid    ),
-    .WB_to_IDU_forward (WB_to_IDU_forward  ),
+    .WB_to_IDU_csr      (WB_csr             ),
+    .WB_to_IDU_gr_we    (WB_to_IDU_gr_we    ),
+    .WB_to_IDU_dest     (WB_to_IDU_dest     ),
+    .WB_to_IDU_valid    (WB_to_IDU_valid    ),
+    .WB_to_IDU_forward  (WB_to_IDU_forward  ),
     // register file interface
-    .rf_waddr          (rf_waddr           ),
-    .rf_wdata          (rf_wdata           ),
-    .rf_we             (rf_we              ),
+    .rf_waddr           (rf_waddr           ),
+    .rf_wdata           (rf_wdata           ),
+    .rf_we              (rf_we              ),
     // debug interface
-    .debug_pc          (debug_wb_pc        ),
-    .debug_rf_we       (debug_wb_rf_we     ),
-    .debug_rf_wnum     (debug_wb_rf_wnum   ), 
-    .debug_rf_wdata    (debug_wb_rf_wdata  ),
+    .debug_pc           (debug_wb_pc        ),
+    .debug_rf_we        (debug_wb_rf_we     ),
+    .debug_rf_wnum      (debug_wb_rf_wnum   ), 
+    .debug_rf_wdata     (debug_wb_rf_wdata  ),
     // csr interface
-    .csr_re            (csr_re             ),
-    .csr_we            (csr_we             ),
-    .csr_num           (csr_num            ),
-    .csr_rvalue        (csr_rvalue         ),
-    .csr_wmask         (csr_wmask          ),
-    .csr_wvalue        (csr_wvalue         ),
-    .wb_pc             (wb_pc              ),
-    .ertn_flush        (ertn_flush         ),
-    .wb_ex             (wb_ex              ),
-    .wb_ecode          (wb_ecode           ),
-    .wb_esubcode       (wb_esubcode        ),
-    .wb_vaddr          (wb_vaddr           ),
-    .adefpc            (adefpc             )
+    .csr_re             (csr_re             ),
+    .csr_we             (csr_we             ),
+    .csr_num            (csr_num            ),
+    .csr_rvalue         (csr_rvalue         ),
+    .csr_wmask          (csr_wmask          ),
+    .csr_wvalue         (csr_wvalue         ),
+    .wb_pc              (wb_pc              ),
+    .ertn_flush         (ertn_flush         ),
+    .wb_ex              (wb_ex              ),
+    .wb_ecode           (wb_ecode           ),
+    .wb_esubcode        (wb_esubcode        ),
+    .wb_vaddr           (wb_vaddr           )
 );
 
 regfile u_regfile(
@@ -332,7 +318,7 @@ regfile u_regfile(
     .we     (rf_we    ),
     .waddr  (rf_waddr ),
     .wdata  (rf_wdata )
-    );
+);
 
 csr_regs u_csr_regs(
     .clk            (clk            ),
@@ -352,7 +338,7 @@ csr_regs u_csr_regs(
     .wb_esubcode    (wb_esubcode    ),
     .wb_vaddr       (wb_vaddr       ),
     .coreid_in      (coreid_in      ),
-    .has_int        (has_int        ),
+    .isintr         (isintr         ),
     .hw_int_in      (hw_int_in      ),
     .ipi_int_in     (ipi_int_in     )
 );

@@ -1,4 +1,7 @@
-`define CSR_NUM_WIDTH 14
+`ifndef CSR_VH
+`define CSR_VH
+
+`define CSRNUML  13:0
 
 `define CSR_CRMD 14'h0
 `define CSR_PRMD 14'h1
@@ -58,3 +61,5 @@
 
 // BITS in TICLR
 `define CSR_TICLR_CLR 0:0
+
+`endif // CSR_VH

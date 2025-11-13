@@ -1,38 +1,39 @@
+`include "busdef.vh"
 `include "ecodes.vh"
 module EXU(
     input  wire        clk,
     input  wire        reset,
+
     // ie
     input  wire        wb_ex,
     input  wire        ertn_flush,
-    input  wire        has_int,
+
     // handshaking signals with IDU
-    input  wire        IDU_to_EXU_valid,
-    output wire        EXU_allow_in,
+    input  wire        idValidout,
+    output wire        exAllowin,
     // handshaking signals with MEM
-    input  wire        MEM_allow_in,
-    output wire        EXU_ready_go,
-    output wire        EXU_to_MEM_valid,
+    input  wire        memAllowin,
+    output wire        exValidout,
 
     // data from IDU
-    input  wire [70:0] IDU_to_EXU_csr_signals,
-    input  wire [31:0] IDU_pc_to_EXU,
-    input  wire [31:0] IDU_inst_to_EXU,
-    input  wire[112:0] IDU_to_EX_ALU_signals,
-    input  wire [15:0] IDU_to_EX_pass_signals,
-    input  wire [ 4:0] IDU_to_EX_div_signals,
+    input  wire [31:0] id2exPC,
+    input  wire [31:0] id2exInst,
+    input  wire [ 4:0] id2exDivBus,
+    input  wire [`CSRBUSL] id2exCsrBus,
+    input  wire [`ALUBUSL] id2exALUBus,
+    input  wire [`IDPASSBUSL] id2exPassBus,
     
     // to MEM
-    output wire[102:0] EXU_csr_signals_to_MEM,
-    output wire [31:0] EXU_pc_to_MEM,
-    output wire [31:0] EXU_inst_to_MEM,
-    output wire [31:0] EXU_result_to_MEM,
-    output wire [12:0] EXU_signals_pass_to_MEM,
+    output wire [31:0] ex2memPC,
+    output wire [31:0] ex2memInst,
+    output wire [31:0] ex2memResult,
+    output wire [`CSRBUSL] ex2memCsrBus,
+    output wire [`EXPASSBUSL] ex2memPassBus,
 
     // data from MEM
-    input  wire        MEM_has_int,
+    input  wire        memStopMemAccess,    // means instruction in MEM stage attached with exception OR ertn is at mem stage
 
-    // to IDU
+    // to IDU, for raw
     output wire        EXU_to_IDU_csr,
     output wire        EXU_to_IDU_gr_we,
     output wire [ 4:0] EXU_to_IDU_dest,
@@ -46,18 +47,20 @@ module EXU(
     output wire [31:0] data_sram_addr,
     output wire [31:0] data_sram_wdata
 );
-reg         EX_valid;
+reg         exValidReg;
+
 reg [ 31:0] inst_reg;
 reg [ 31:0] pc_reg;
-reg [112:0] alu_signals_reg;
-reg [ 15:0] pass_signals_reg;
 reg [  4:0] div_signals_reg;
+reg [`ALUBUSL] alu_signals_reg;
+reg [`IDPASSBUSL] pass_signals_reg;
+
 reg         signed_div_dividend_tvalid_reg;
 reg         signed_div_divisor_tvalid_reg;
 reg         unsigned_div_dividend_tvalid_reg;
 reg         unsigned_div_divisor_tvalid_reg;
-reg [ 70:0] csr_signals_reg;
-reg         ertn_lock_reg;
+
+reg [`CSRBUSL] csr_signals_reg;
 
 reg [ 63:0] stable_counter;
 wire        inst_rdcntvl_w;
@@ -111,24 +114,24 @@ wire        csr;
 wire        csr_we;
 wire [13:0] csr_num;
 wire [31:0] csr_wmask;
+wire [31:0] csr_wvalue;
+wire [31:0] null32;
+
 wire        exception;
 wire        isale;
 wire [ 5:0] ecode;
 wire [ 5:0] newecode;       // add ALE exception
 wire [14:0] syscall_code;
-wire        EXU_ertn_flush;
-wire [31:0] csr_wvalue;
 
-wire [31:0] EXU_result;
+wire        exErtnFlush;
+
+wire [31:0] exResult;
 always @(posedge clk) begin
     if (reset) begin
-        csr_signals_reg <= 71'b0;
+        csr_signals_reg <= `CSRBUSW'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
-        csr_signals_reg <= 71'b0;
-    end
-    else if (EXU_allow_in && IDU_to_EXU_valid) begin
-        csr_signals_reg <= IDU_to_EXU_csr_signals;
+    else if (exAllowin && idValidout) begin
+        csr_signals_reg <= id2exCsrBus;
     end
 end
 
@@ -136,63 +139,51 @@ always @(posedge clk) begin
     if (reset) begin
         inst_reg <= 32'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
-        inst_reg <= 32'b0;
-    end
-    else if (EXU_allow_in && IDU_to_EXU_valid) begin
-        inst_reg <= IDU_inst_to_EXU;
+    else if (exAllowin && idValidout) begin
+        inst_reg <= id2exInst;
     end
 end
 always @(posedge clk) begin
     if (reset) begin
         pc_reg <= 32'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
-        pc_reg <= 32'b0;
-    end
-    else if (EXU_allow_in && IDU_to_EXU_valid) begin
-        pc_reg <= IDU_pc_to_EXU;
+    else if (exAllowin && idValidout) begin
+        pc_reg <= id2exPC;
     end
 end
 always @(posedge clk) begin
     if (reset) begin
-        alu_signals_reg <= 113'b0;
+        alu_signals_reg <= `ALUBUSW'b0;
     end
-    else if (ertn_flush || has_int || wb_ex) begin
-        alu_signals_reg <= 113'b0;
-    end
-    else if (EXU_allow_in && IDU_to_EXU_valid) begin
-        alu_signals_reg <= IDU_to_EX_ALU_signals;
+    else if (exAllowin && idValidout) begin
+        alu_signals_reg <= id2exALUBus;
     end
 end
 always @(posedge clk) begin
     if (reset) begin
-        pass_signals_reg <= 16'b0;
+        pass_signals_reg <= `IDPASSBUSW'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
-        pass_signals_reg <= 16'b0;
-    end
-    else if (EXU_allow_in && IDU_to_EXU_valid) begin
-        pass_signals_reg <= IDU_to_EX_pass_signals;
+    else if (exAllowin && idValidout) begin
+        pass_signals_reg <= id2exPassBus;
     end
 end
 always @(posedge clk) begin
     if (reset) begin
         div_signals_reg <= 5'b0;
     end
-    else if(ertn_flush || has_int || wb_ex) begin
+    else if(ertn_flush || wb_ex) begin
         div_signals_reg <= 5'b0;
     end
-    else if (EXU_allow_in && IDU_to_EXU_valid) begin
-        div_signals_reg <= IDU_to_EX_div_signals;
+    else if (exAllowin && idValidout) begin
+        div_signals_reg <= id2exDivBus;
     end
 end
 always @(posedge clk) begin
     if (reset) begin
         signed_div_dividend_tvalid_reg <= 1'b0;
     end
-    else if (EXU_allow_in && IDU_to_EXU_valid) begin
-        signed_div_dividend_tvalid_reg <= IDU_to_EX_div_signals[4] && (IDU_to_EX_div_signals[0] | IDU_to_EX_div_signals[1]);
+    else if (exAllowin && idValidout) begin
+        signed_div_dividend_tvalid_reg <= id2exDivBus[4] && (id2exDivBus[0] | id2exDivBus[1]);
     end
     else if (signed_div_dividend_tready) begin
         signed_div_dividend_tvalid_reg <= 1'b0;
@@ -203,8 +194,8 @@ always @(posedge clk) begin
     if (reset) begin
         signed_div_divisor_tvalid_reg <= 1'b0;
     end
-    else if (EXU_allow_in && IDU_to_EXU_valid) begin
-        signed_div_divisor_tvalid_reg <= IDU_to_EX_div_signals[4] && (IDU_to_EX_div_signals[0] | IDU_to_EX_div_signals[1]);
+    else if (exAllowin && idValidout) begin
+        signed_div_divisor_tvalid_reg <= id2exDivBus[4] && (id2exDivBus[0] | id2exDivBus[1]);
     end
     else if (signed_div_divisor_tready) begin
         signed_div_divisor_tvalid_reg <= 1'b0;
@@ -214,8 +205,8 @@ always @(posedge clk) begin
     if (reset) begin
         unsigned_div_dividend_tvalid_reg <= 1'b0;
     end
-    else if (EXU_allow_in && IDU_to_EXU_valid) begin
-        unsigned_div_dividend_tvalid_reg <= IDU_to_EX_div_signals[4] && (IDU_to_EX_div_signals[2] | IDU_to_EX_div_signals[3]);
+    else if (exAllowin && idValidout) begin
+        unsigned_div_dividend_tvalid_reg <= id2exDivBus[4] && (id2exDivBus[2] | id2exDivBus[3]);
     end
     else if (unsigned_div_dividend_tready) begin
         unsigned_div_dividend_tvalid_reg <= 1'b0;
@@ -225,8 +216,8 @@ always @(posedge clk) begin
     if (reset) begin
         unsigned_div_divisor_tvalid_reg <= 1'b0;
     end
-    else if (EXU_allow_in && IDU_to_EXU_valid) begin
-        unsigned_div_divisor_tvalid_reg <= IDU_to_EX_div_signals[4] && (IDU_to_EX_div_signals[2] | IDU_to_EX_div_signals[3]);
+    else if (exAllowin && idValidout) begin
+        unsigned_div_divisor_tvalid_reg <= id2exDivBus[4] && (id2exDivBus[2] | id2exDivBus[3]);
     end
     else if (unsigned_div_divisor_tready) begin
         unsigned_div_divisor_tvalid_reg <= 1'b0;
@@ -238,17 +229,6 @@ always @(posedge clk) begin
     end
     else begin
         stable_counter <= stable_counter + 1'b1;
-    end
-end
-always @(posedge clk) begin
-    if (reset) begin
-        ertn_lock_reg <= 1'b0;
-    end
-    else if (EXU_ertn_flush) begin
-        ertn_lock_reg <= 1'b1;
-    end
-    else if (ertn_flush) begin
-        ertn_lock_reg <= 1'b0;
     end
 end
 
@@ -301,72 +281,77 @@ assign signed_div_quotient   = signed_div_result[63:32];
 assign unsigned_div_remainder= unsigned_div_result[31:0];
 assign unsigned_div_quotient = unsigned_div_result[63:32];
 assign final_div_result = (div_op[0]) ? signed_div_quotient :
-                          (div_op[1]) ? signed_div_remainder :
-                          (div_op[2]) ? unsigned_div_quotient :
-                          (div_op[3]) ? unsigned_div_remainder : 32'b0;
+                            (div_op[1]) ? signed_div_remainder :
+                            (div_op[2]) ? unsigned_div_quotient :
+                            (div_op[3]) ? unsigned_div_remainder : 32'b0;
 
-assign EXU_result = use_div ? final_div_result :
+assign exResult = use_div ? final_div_result :
                     inst_rdcntvh_w ? stable_counter[63:32] :
                     inst_rdcntvl_w ? stable_counter[31: 0] : alu_result;
 assign pc = pc_reg;
 assign inst = inst_reg;
 assign {rj_value, rkd_value, imm, alu_op, src1_is_pc, src2_is_imm} = alu_signals_reg;
 assign {res_from_mem, gr_we, mem_we, dest, inst_rdcntvh_w, inst_rdcntvl_w} = pass_signals_reg;
-assign EXU_pc_to_MEM = pc;
-assign EXU_inst_to_MEM = inst;
-assign EXU_result_to_MEM = EXU_result;
-assign EXU_signals_pass_to_MEM = {res_from_mem, mem_offsets, gr_we, dest};
+assign ex2memPC = pc;
+assign ex2memInst = inst;
+assign ex2memResult = exResult;
+assign ex2memPassBus = {res_from_mem, mem_offsets, gr_we, dest};
 assign mem_offsets = alu_result[1:0];
 
-assign {csr, csr_we, csr_num, csr_wmask, exception, ecode, syscall_code, EXU_ertn_flush} = csr_signals_reg;
+assign {csr, csr_we, csr_num, csr_wmask, null32, exception, ecode, syscall_code, exErtnFlush} = csr_signals_reg;
 assign csr_wvalue = rkd_value;
 assign EXU_to_IDU_csr = csr;
-assign EXU_csr_signals_to_MEM = {csr,               // [0]
-                                 csr_we,            // [1]
-                                 csr_num,           // [15:2], 14
-                                 csr_wmask,         // [47:16], 32
-                                 csr_wvalue,        // [79:48], 32
-                                 exception | isale, // [80]
-                                 newecode,          // [86:81], 6
-                                 syscall_code,      // [101:87], 15
-                                 EXU_ertn_flush     // [102]
-                                };
+assign ex2memCsrBus = {csr,               // [0]
+                        csr_we,            // [1]
+                        csr_num,           // [15:2], 14
+                        csr_wmask,         // [47:16], 32
+                        csr_wvalue,        // [79:48], 32
+                        exception | isale, // [80]
+                        newecode,          // [86:81], 6
+                        syscall_code,      // [101:87], 15
+                        exErtnFlush        // [102]
+                        };
 // to data sram interface
 assign data_sram_en = 1'b1;
-assign data_sram_we = (~EX_valid || has_int || wb_ex || ertn_lock_reg || MEM_has_int || isale) ? 4'b0 :
-                      mem_we[2] ? 4'b1111 :
-                      mem_we[1] ? (mem_offsets[1]       ? 4'b1100 : 4'b0011):
-                      mem_we[0] ? (mem_offsets == 2'b00 ? 4'b0001 :
-                                   mem_offsets == 2'b01 ? 4'b0010 :
-                                   mem_offsets == 2'b10 ? 4'b0100 :
-                                                          4'b1000): 4'b0;
+assign data_sram_we = (~exValidReg || wb_ex || memStopMemAccess || isale) ? 4'b0 :
+                    mem_we[2] ? 4'b1111 :
+                    mem_we[1] ? (mem_offsets[1]       ? 4'b1100 : 4'b0011):
+                    mem_we[0] ? (mem_offsets == 2'b00 ? 4'b0001 :
+                                    mem_offsets == 2'b01 ? 4'b0010 :
+                                    mem_offsets == 2'b10 ? 4'b0100 :
+                                                        4'b1000): 4'b0;
 assign data_sram_addr = {alu_result[31:2], 2'b00};  // word aligned address
 assign data_sram_wdata = mem_we[2] ?    rkd_value :
-                         mem_we[1] ? {2{rkd_value[15:0]}} :
-                         mem_we[0] ? {4{rkd_value[ 7:0]}} : 32'b0;
+                            mem_we[1] ? {2{rkd_value[15:0]}} :
+                            mem_we[0] ? {4{rkd_value[ 7:0]}} : 32'b0;
 
-assign isale = (~(alu_result[1:0] == 2'b0) & (mem_we[2] | res_from_mem[4]))|    // word-aligned check
-               (~(alu_result[0]   == 1'b0) & (mem_we[1] | res_from_mem[3] | res_from_mem[1]));    // half-word-aligned check
-assign newecode = isale ? `ECODE_ALE : ecode;
+assign isale  = (~(alu_result[1:0] == 2'b0) & (mem_we[2] | res_from_mem[4]))|    // word-aligned check
+                (~(alu_result[0]   == 1'b0) & (mem_we[1] | res_from_mem[3] | res_from_mem[1]));    // half-word-aligned check
+assign newecode = exception ?  ecode:
+                    isale     ? `ECODE_ALE:
+                                `ECODE_INT;   // to keep priority of exceptions
 
 // to IDU
 assign EXU_to_IDU_gr_we = gr_we;
 assign EXU_to_IDU_dest  = dest;
-assign EXU_to_IDU_valid = EX_valid;
-assign EXU_to_IDU_forward = EXU_result;
-assign EXU_current_is_ld = |res_from_mem && EX_valid;
+assign EXU_to_IDU_valid = exValidReg;
+assign EXU_to_IDU_forward = exResult;
+assign EXU_current_is_ld = |res_from_mem && exValidReg;
 
 // EX status
 always @(posedge clk) begin
     if (reset) begin
-        EX_valid <= 1'b0;
+        exValidReg <= 1'b0;
     end
-    else if (EXU_allow_in) begin
-        EX_valid <= IDU_to_EXU_valid;
+    else if (wb_ex || ertn_flush) begin
+        exValidReg <= 1'b0;
+    end
+    else if (exAllowin) begin
+        exValidReg <= idValidout;
     end
 end
-assign EXU_ready_go = use_div ? (signed_div_dout_valid | unsigned_div_dout_valid) : 1'b1;
-assign EXU_to_MEM_valid = EX_valid && EXU_ready_go;
-assign EXU_allow_in = !EX_valid || (EXU_ready_go && MEM_allow_in);
+assign exReadygo  =  use_div ? (signed_div_dout_valid | unsigned_div_dout_valid) : 1'b1;
+assign exValidout =  exValidReg &&  exReadygo;
+assign exAllowin  = !exValidReg || (exReadygo && memAllowin);
 
 endmodule
