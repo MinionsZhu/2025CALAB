@@ -171,9 +171,6 @@ always @(posedge clk) begin
     if (reset) begin
         div_signals_reg <= 5'b0;
     end
-    else if(ertn_flush || wb_ex) begin
-        div_signals_reg <= 5'b0;
-    end
     else if (exAllowin && idValidout) begin
         div_signals_reg <= id2exDivBus;
     end

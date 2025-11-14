@@ -40,7 +40,7 @@ module MEMU(
     output wire [31:0] mem2wbResult,
     output wire [31:0] mem2wbMemvaddr,
     output wire [`CSRBUSL] mem2wbCsrBus,
-    output wire [`MEMPASSBUSL] mem2wbPassBus,
+    output wire [`MEMPASSBUSL] mem2wbPassBus
 );
 
 reg         memValidReg;
@@ -88,7 +88,7 @@ always @(posedge clk) begin
         inst_reg <= 32'b0;
     end
     else if (memAllowin && exValidout) begin
-        inst_reg <= EXU_inst_to_MEM;
+        inst_reg <= ex2memInst;
     end
 end
 
@@ -118,7 +118,7 @@ always @(posedge clk) begin
         signals_pass_reg <= ex2memPassBus;
     end
 end
-assign {csr, csr_we, csr_num, csr_wmask, exception, ecode, syscall_code, memErtnFlush} = csr_signals_reg;
+assign {csr, csr_we, csr_num, csr_wmask, csr_wvalue, exception, ecode, syscall_code, memErtnFlush} = csr_signals_reg;
 
 assign pc           = pc_reg;
 assign inst         = inst_reg;
@@ -143,13 +143,13 @@ assign mem_result[31:16] = ({16{res_from_mem[2]}} & {16{shift_rdata[ 7]}} )|
 
 // 4 = ld.w, 3 = ld.h, 2 = ld.b, 1 = ld.hu, 0 = ld.bu
 
-assign mem2wbPC       = pc  &{32{!(wb_ex || has_int || ertn_flush)}};
-assign mem2wbInst     = inst&{32{!(wb_ex || has_int || ertn_flush)}};
-assign mem2wbResult   =(wb_ex || has_int || ertn_flush) ? 32'b0 : (res_from_mem ? mem_result : ex_result);
-assign mem2wbCsrBus   = csr_signals_reg & {`CSRBUSW{!(wb_ex || has_int || ertn_flush)}};
+assign mem2wbPC       = pc  &{32{!(wb_ex || ertn_flush)}};
+assign mem2wbInst     = inst&{32{!(wb_ex || ertn_flush)}};
+assign mem2wbResult   =(wb_ex || ertn_flush) ? 32'b0 : (res_from_mem ? mem_result : ex_result);
+assign mem2wbCsrBus   = csr_signals_reg & {`CSRBUSW{!(wb_ex || ertn_flush)}};
 assign mem2wbMemvaddr = ex_result;  // if inst is load/store, then ex_result must be memvaddr
 
-assign mem2wbPassBus = {gr_we, dest} & {`MEMPASSBUSW{!(wb_ex || has_int || ertn_flush)}};
+assign mem2wbPassBus = {gr_we, dest} & {`MEMPASSBUSW{!(wb_ex || ertn_flush)}};
 
 assign memStopMemAccess = (exception | memErtnFlush) & memValidReg;
 // to IDU

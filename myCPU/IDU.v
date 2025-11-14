@@ -412,7 +412,7 @@ always @(posedge clk) begin
     if (reset) begin
         preciseExcptReg <= 7'b0;    // to keep precise exception info
     end
-    else if(idValidout && exAllowin) begin
+    else if(idAllowin & ifValidout) begin   // for it is from if, it should be controled by idAllowin & ifValidout
         preciseExcptReg <= {isintr | isadef,
                             isintr ? `ECODE_INT :
                             isadef ? `ECODE_ADE : `ECODE_INT};   // to keep precise exception info

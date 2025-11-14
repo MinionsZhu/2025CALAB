@@ -117,55 +117,55 @@ wire        MEM_csr;
 wire        WB_csr;
 
 IDU u_IDU(
-    .clk               (clk                ),
-    .reset             (reset              ),
+    .clk                (clk                ),
+    .reset              (reset              ),
     // ie
-    .wb_ex             (wb_ex              ),
-    .ertn_flush        (ertn_flush         ),
-    .isintr            (isintr             ),
+    .wb_ex              (wb_ex              ),
+    .ertn_flush         (ertn_flush         ),
+    .isintr             (isintr             ),
     // from IFU
-    .pc_from_IFU       (if2idPC            ),
-    .inst_from_IFU     (if2idInst          ),
-    .isadef            (isadef             ),   // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
+    .if2idPC            (if2idPC            ),
+    .if2idInst          (if2idInst          ),
+    .isadef             (isadef             ),   // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
     // to IFU
-    .br_taken          (br_taken           ),
-    .br_taken_cancel   (br_taken_cancel    ),
-    .br_target         (br_target          ),
+    .br_taken           (br_taken           ),
+    .br_taken_cancel    (br_taken_cancel    ),
+    .br_target          (br_target          ),
     // handshaking signals with IFU
-    .ifValidout        (ifValidout         ),
-    .idAllowin         (idAllowin          ),
+    .ifValidout         (ifValidout         ),
+    .idAllowin          (idAllowin          ),
     // handshaking signals with EXU
-    .exAllowin         (exAllowin          ),
-    .idValidout        (idValidout         ),
+    .exAllowin          (exAllowin          ),
+    .idValidout         (idValidout         ),
     // signals and data to EXU
-    .id2exCsrBus       (id2exCsrBus        ),
-    .id2exPC           (id2exPC            ),
-    .id2exInst         (id2exInst          ),
-    .id2exALUBus       (id2exALUBus        ),
-    .id2exPassBus      (id2exPassBus       ),
-    .id2exDivBus       (id2exDivBus        ),
+    .id2exCsrBus        (id2exCsrBus        ),
+    .id2exPC            (id2exPC            ),
+    .id2exInst          (id2exInst          ),
+    .id2exALUBus        (id2exALUBus        ),
+    .id2exPassBus       (id2exPassBus       ),
+    .id2exDivBus        (id2exDivBus        ),
     // forwarding from EXU/MEMU/WBU
-    .EXU_gr_we         (EXU_to_IDU_gr_we   ),
-    .EXU_dest          (EXU_to_IDU_dest    ),
-    .EXU_valid         (EXU_to_IDU_valid   ),
-    .EXU_to_ID_forward (EXU_to_IDU_forward ),
-    .EXU_current_is_ld (EXU_current_is_ld  ),
-    .EXU_csr           (EXU_csr            ),
-    .MEM_gr_we         (MEM_to_IDU_gr_we   ),
-    .MEM_dest          (MEM_to_IDU_dest    ),
-    .MEM_valid         (MEM_to_IDU_valid   ),
-    .MEM_to_ID_forward (MEM_to_IDU_forward ),
-    .MEM_csr           (MEM_to_IDU_csr     ),
-    .WB_gr_we          (WB_to_IDU_gr_we    ),
-    .WB_dest           (WB_to_IDU_dest     ),
-    .WB_valid          (WB_to_IDU_valid    ),
-    .WB_to_ID_forward  (WB_to_IDU_forward  ),
-    .WB_csr            (WB_csr             ),
+    .EXU_gr_we          (EXU_to_IDU_gr_we   ),
+    .EXU_dest           (EXU_to_IDU_dest    ),
+    .EXU_valid          (EXU_to_IDU_valid   ),
+    .EXU_to_ID_forward  (EXU_to_IDU_forward ),
+    .EXU_current_is_ld  (EXU_current_is_ld  ),
+    .EXU_csr            (EXU_csr            ),
+    .MEM_gr_we          (MEM_to_IDU_gr_we   ),
+    .MEM_dest           (MEM_to_IDU_dest    ),
+    .MEM_valid          (MEM_to_IDU_valid   ),
+    .MEM_to_ID_forward  (MEM_to_IDU_forward ),
+    .MEM_csr            (MEM_to_IDU_csr     ),
+    .WB_gr_we           (WB_to_IDU_gr_we    ),
+    .WB_dest            (WB_to_IDU_dest     ),
+    .WB_valid           (WB_to_IDU_valid    ),
+    .WB_to_ID_forward   (WB_to_IDU_forward  ),
+    .WB_csr             (WB_csr             ),
     // register file interface
-    .rf_raddr1         (rf_raddr1          ),
-    .rf_raddr2         (rf_raddr2          ),
-    .rf_rdata1         (rf_rdata1          ),
-    .rf_rdata2         (rf_rdata2          )
+    .rf_raddr1          (rf_raddr1          ),
+    .rf_raddr2          (rf_raddr2          ),
+    .rf_rdata1          (rf_rdata1          ),
+    .rf_rdata2          (rf_rdata2          )
 );
 
 wire        memAllowin;

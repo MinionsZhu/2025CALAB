@@ -47,7 +47,7 @@ module WBU(
     output wire        wb_ex,
     output wire [ 5:0] wb_ecode,
     output wire [ 8:0] wb_esubcode,
-    output wire [31:0] wb_vaddr,
+    output wire [31:0] wb_vaddr
 );
 
 reg [`CSRBUSL] csr_signals_reg;
@@ -160,7 +160,7 @@ assign csr_wmask = WBU_csr_wmask;
 assign csr_wvalue = WBU_csr_wvalue;
 assign wb_pc = pc;
 assign ertn_flush = WBU_ertn_flush;
-assign wb_ex = WBU_exception;
+assign wb_ex = WBU_exception & wbValidReg;  // only when valid, exception takes effect
 assign wb_ecode = WBU_ecode;
 assign wb_esubcode = 9'h0;  // now there is no ADEM exception.
 assign WB_to_IDU_csr = WBU_csr;
