@@ -17,6 +17,7 @@ module IDU(
     output wire        br_taken,
     output wire        br_taken_cancel,
     output wire [31:0] br_target,
+    output wire        br_stall,   // tell preIF wait true br_target
 
     // handshaking signals with IFU
     input  wire        ifValidout,
@@ -44,6 +45,7 @@ module IDU(
     input  wire        MEM_gr_we,
     input  wire        MEM_valid,
     input  wire [31:0] MEM_to_ID_forward,
+    input  wire        MEM_to_ID_forward_valid,
     input  wire        MEM_csr,
     input  wire [ 4:0] WB_dest,
     input  wire        WB_gr_we,
@@ -435,6 +437,7 @@ assign br_taken = (   inst_beq  &&  rj_eq_rd
                 || inst_b
                 ) && idValidReg;
 assign br_taken_cancel = !idReadygo ? 1'b0 : br_taken; // idValidReg is used
+assign br_stall = br_taken && !idReadygo;
 assign br_target = (inst_beq || inst_bne ||
                     inst_blt || inst_bge ||
                     inst_bltu || inst_bgeu ||
@@ -574,7 +577,8 @@ always @(posedge clk) begin
     end
 end
 wire   block;
-assign block = !ertn_flush && !wb_ex && ((EXU_current_is_ld && EXU_raw) || csr_raw);
+// exp14 BUG: !MEM_to_ID_forward_valid also need && MEM_raw
+assign block = !ertn_flush && !wb_ex && idValidReg && ((EXU_current_is_ld && EXU_raw) || csr_raw || (!MEM_to_ID_forward_valid && MEM_raw));
 
 assign idValidout =  idValidReg && idReadygo;
 assign idReadygo  = !block;

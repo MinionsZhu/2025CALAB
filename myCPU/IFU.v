@@ -12,16 +12,21 @@ module IFU(
     input  wire [31:0] ertn_pc,
 
     // inst sram interface
-    output wire        inst_sram_en,
-    output wire [ 3:0] inst_sram_we,
+    output wire        inst_sram_req,
+    output wire        inst_sram_wr,
+    output wire [ 1:0] inst_sram_size,
+    output wire [ 3:0] inst_sram_wstrb,
     output wire [31:0] inst_sram_addr,
     output wire [31:0] inst_sram_wdata,
+    input  wire        inst_sram_addr_ok,
+    input  wire        inst_sram_data_ok,
     input  wire [31:0] inst_sram_rdata,
 
     // from IDU
     input  wire        br_taken,
     input  wire        br_taken_cancel,
     input  wire [31:0] br_target,
+    input  wire        br_stall,
 
     // to IDU
     output wire [31:0] if2idInst,
@@ -33,35 +38,74 @@ module IFU(
     output wire        ifValidout
 );
     // preif stage
-    reg         ifValidReg;
-    wire        preifValidout;
-    wire        ifAllowin;
-
-    reg  [31:0] pc;
-    wire [31:0] seq_pc;
+    reg         preifValidReg;
     wire [31:0] nextpc;
+    wire        preifValidout;
+    wire        preifReadygo;
+    wire        pcValidin;
+    wire [31:0] nextpc_in;
+    wire        pcValidout;
+    wire [31:0] nextpc_out;
+
+    // if stage
+    reg         ifValidReg;
+    reg  [31:0] pc;
+    reg         instCancelReg;
+    wire [31:0] seq_pc;
+    wire        instValidout;
 
     // ADEF exception
     reg         regAdef;
 
-    // inst sram interface
-    assign inst_sram_en    = preifValidout && idAllowin;
-    assign inst_sram_we    = 4'b0;
-    assign inst_sram_addr  = {nextpc[31:2], 2'b0};  // word aligned to avoid unaligned access
-    assign inst_sram_wdata = 32'b0;
+    /*******************/
+    /*   data buffer   */
+    /*******************/
+    data_buffer preif_nextpc_buffer(
+        .clk(clk),
+        .reset(reset),
+        .dataReq(preifAllowin),
+        .Validin(pcValidin),
+        .data_in(nextpc_in),
+        .Validout(pcValidout),
+        .data_out(nextpc_out)
+    );
 
-    // ADEF exception register
+    assign pcValidin = wb_ex || ertn_flush || br_taken_cancel;    // nextpc redirect condition
+    assign nextpc_in = (wb_ex)    ? ex_entry
+                      : ertn_flush ? ertn_pc
+                      : br_taken   ? br_target
+                      : seq_pc;     // do not use, only for completeness
+
+    data_buffer if_inst_buffer(
+        .clk(clk),
+        .reset(reset),
+        .dataReq(idAllowin || instCancelReg),
+        .Validin(inst_sram_data_ok),
+        .data_in(inst_sram_rdata),
+        .Validout(instValidout),
+        .data_out(if2idInst)
+    );
+
+    /*******************************/
+    /*   pre-IF pipeline signals   */
+    /*******************************/
     always @(posedge clk) begin
         if (reset) begin
-            regAdef <= 1'b0;
+            preifValidReg <= 1'b0;
         end
-        else if (ifAllowin) begin
-            regAdef <= ~(nextpc[1:0] == 2'b0);
+        else if (preifAllowin) begin
+            preifValidReg <= 1'b1;
         end
-        // need not clear because although adef passed to id, it still blocked/disabled by valid signal
     end
-    assign isadef = regAdef; // check current pc alignment
 
+    assign nextpc = pcValidout ? nextpc_out : seq_pc;
+    assign preifValidout = preifValidReg && preifReadygo;
+    assign preifReadygo = inst_sram_req && inst_sram_addr_ok;
+    assign preifAllowin = (!preifValidReg || (preifReadygo && ifAllowin)) && !br_stall && !reset;
+
+    /*******************************/
+    /*     IF pipeline signals     */
+    /*******************************/
     // IF status
     always @(posedge clk) begin
         if (reset) begin
@@ -70,22 +114,12 @@ module IFU(
         else if (ifAllowin) begin
             ifValidReg <= preifValidout;
         end
-        else if(br_taken_cancel | wb_ex | ertn_flush) begin  // 例外时和例外返回时都需要清空，此处待做
+        else if(br_taken_cancel | wb_ex | ertn_flush) begin  // except and ertn flush
             ifValidReg <= 1'b0;
         end
     end
-    assign preifValidout = !reset;
-    assign ifReadygo     =  1'b1;
-    assign ifValidout    =  ifValidReg &&  ifReadygo;
-    assign ifAllowin     = !ifValidReg || (ifReadygo && idAllowin);
-    
-    // pc register & output to IDU
-    assign seq_pc = pc + 4;
-    assign nextpc = (wb_ex)    ? ex_entry
-                  : ertn_flush ? ertn_pc
-                  : br_taken   ? br_target
-                  : seq_pc;
 
+    // pc register & output to IDU
     always @(posedge clk) begin
         if (reset) begin
             pc <= 32'h1bfffffc;
@@ -95,7 +129,87 @@ module IFU(
         end
     end
 
-    assign if2idInst = inst_sram_rdata;
+    always @(posedge clk) begin
+        if (reset) begin
+            instCancelReg <= 1'b0;
+        end
+        else if (inst_sram_data_ok) begin   // exp14 BUG: it should has higher priority than (br_taken_cancel | wb_ex | ertn_flush) && (!ifAllowin && !ifReadygo)
+            instCancelReg <= 1'b0;
+        end
+        else if ((br_taken_cancel | wb_ex | ertn_flush) && (!ifAllowin && !ifReadygo)) begin  // exp14 BUG: when preifValidout = 1, do not cancel
+            instCancelReg <= 1'b1;
+        end
+    end
+
+    assign ifValidout = ifValidReg && ifReadygo;    // exp14 BUG: do not write (ifValidReg || instValidout) && ifReadygo
+    assign ifReadygo = (inst_sram_data_ok || instValidout) && !instCancelReg;
+    assign ifAllowin = (!ifValidReg || (ifReadygo && idAllowin)) && !instCancelReg;
+
+    assign seq_pc    = pc + 4;
     assign if2idPC   = pc;
 
+    /*******************************/
+    /*     inst sram interface     */
+    /*******************************/
+    assign inst_sram_req    = preifValidReg && ifAllowin;
+    assign inst_sram_wr     = 1'b0;
+    assign inst_sram_size   = 2'b10;
+    assign inst_sram_wstrb  = 4'b0000;
+    assign inst_sram_addr   = { nextpc[31:2], 2'b00 };
+    assign inst_sram_wdata  = 32'b0;
+
+    /*******************************/
+    /*   ADEF exception register   */
+    /*******************************/
+    always @(posedge clk) begin
+        if (reset) begin
+            regAdef <= 1'b0;
+        end
+        else if (ifAllowin) begin
+            regAdef <= ~(nextpc[1:0] == 2'b0);
+        end
+    end
+    assign isadef = regAdef; // csr_signal_reg for IF stage
+
+endmodule
+
+// exp14: this module buffers: 
+// 1. instructions between IF and ID to handle timing differences
+// 2. target pc between preIF and ID/WB to handle timing differences
+// For improved timing performance, when Validin is high, even if validReg is not high, it can also have valid output
+module data_buffer(
+    input  wire        clk,
+    input  wire        reset,
+    input  wire        dataReq,
+    input  wire        Validin,
+    input  wire [31:0] data_in,
+    output wire        Validout,
+    output wire [31:0] data_out
+);
+    reg [31:0] data_reg;
+    reg        validReg;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            validReg <= 1'b0;
+        end
+        else if (dataReq) begin
+            validReg <= 1'b0;
+        end
+        else if (Validin) begin
+            validReg <= 1'b1;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (reset) begin
+            data_reg <= 32'h00000000;
+        end
+        else if (Validin) begin
+            data_reg <= data_in;
+        end
+    end
+
+    assign data_out = (Validin) ? data_in : data_reg;
+    assign Validout = validReg || Validin;
 endmodule

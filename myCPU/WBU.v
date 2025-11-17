@@ -146,6 +146,9 @@ always @(posedge clk ) begin
     if (reset) begin
         wbValidReg <= 1'b0;
     end
+    else if (wb_ex || ertn_flush) begin
+        wbValidReg <= 1'b0;
+    end
     else if(wbAllowin)begin
         wbValidReg <= memValidout;
     end
@@ -159,7 +162,7 @@ assign csr_num = WBU_csr_num;
 assign csr_wmask = WBU_csr_wmask;
 assign csr_wvalue = WBU_csr_wvalue;
 assign wb_pc = pc;
-assign ertn_flush = WBU_ertn_flush;
+assign ertn_flush = WBU_ertn_flush & wbValidReg;  // only when valid, ertn takes effect
 assign wb_ex = WBU_exception & wbValidReg;  // only when valid, exception takes effect
 assign wb_ecode = WBU_ecode;
 assign wb_esubcode = 9'h0;  // now there is no ADEM exception.
@@ -168,7 +171,7 @@ assign wb_vaddr = MEM_memvaddr_to_WB_reg;
 
 assign wbReadygo      = 1'b1;
 assign wbValidout     = wbValidReg && wbReadygo;
-assign wbAllowin      = !wbValidReg || (wbReadygo && wbValidout);
+assign wbAllowin      = !wbValidReg || (wbReadygo);
 
 assign debug_pc       = pc;
 assign debug_rf_we    = {4{rf_we}};

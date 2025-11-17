@@ -22,6 +22,9 @@ module EXU(
     input  wire [`CSRBUSL] id2exCsrBus,
     input  wire [`ALUBUSL] id2exALUBus,
     input  wire [`IDPASSBUSL] id2exPassBus,
+
+    // data from MEM
+    input  wire        memStopMemAccess,
     
     // to MEM
     output wire [31:0] ex2memPC,
@@ -29,9 +32,6 @@ module EXU(
     output wire [31:0] ex2memResult,
     output wire [`CSRBUSL] ex2memCsrBus,
     output wire [`EXPASSBUSL] ex2memPassBus,
-
-    // data from MEM
-    input  wire        memStopMemAccess,    // means instruction in MEM stage attached with exception OR ertn is at mem stage
 
     // to IDU, for raw
     output wire        EXU_to_IDU_csr,
@@ -42,10 +42,13 @@ module EXU(
     output wire        EXU_current_is_ld,
 
     // data sram interface
-    output wire        data_sram_en,
-    output wire [ 3:0] data_sram_we,
+    output wire        data_sram_req,
+    output wire        data_sram_wr,
+    output wire [ 1:0] data_sram_size,
+    output wire [ 3:0] data_sram_wstrb,
     output wire [31:0] data_sram_addr,
-    output wire [31:0] data_sram_wdata
+    output wire [31:0] data_sram_wdata,
+    input  wire        data_sram_addr_ok
 );
 reg         exValidReg;
 
@@ -292,7 +295,7 @@ assign {res_from_mem, gr_we, mem_we, dest, inst_rdcntvh_w, inst_rdcntvl_w} = pas
 assign ex2memPC = pc;
 assign ex2memInst = inst;
 assign ex2memResult = exResult;
-assign ex2memPassBus = {res_from_mem, mem_offsets, gr_we, dest};
+assign ex2memPassBus = {is_sram_inst, res_from_mem, mem_offsets, gr_we, dest};
 assign mem_offsets = alu_result[1:0];
 
 assign {csr, csr_we, csr_num, csr_wmask, null32, exception, ecode, syscall_code, exErtnFlush} = csr_signals_reg;
@@ -308,20 +311,35 @@ assign ex2memCsrBus = {csr,               // [0]
                         syscall_code,      // [101:87], 15
                         exErtnFlush        // [102]
                         };
-// to data sram interface
-assign data_sram_en = 1'b1;
-assign data_sram_we = (~exValidReg || wb_ex || memStopMemAccess || isale) ? 4'b0 :
+
+/*******************************/
+/*     data sram interface     */
+/*******************************/
+assign is_sram_inst = (|res_from_mem || |mem_we) && exValidReg && !isale;
+assign data_sram_req = is_sram_inst && memAllowin && !memStopMemAccess && !wb_ex && !ertn_flush;  // exp14 BUG: when MEM/WB has exception, do not send req
+assign data_sram_wr  = |mem_we;
+assign data_sram_wstrb = (~exValidReg || wb_ex || isale) ? 4'b0 :
                     mem_we[2] ? 4'b1111 :
                     mem_we[1] ? (mem_offsets[1]       ? 4'b1100 : 4'b0011):
                     mem_we[0] ? (mem_offsets == 2'b00 ? 4'b0001 :
                                     mem_offsets == 2'b01 ? 4'b0010 :
                                     mem_offsets == 2'b10 ? 4'b0100 :
                                                         4'b1000): 4'b0;
-assign data_sram_addr = {alu_result[31:2], 2'b00};  // word aligned address
+// addr and size
+assign is_sram_w = mem_we[2] || res_from_mem[4];
+assign is_sram_h = mem_we[1] || res_from_mem[3] || res_from_mem[1];
+assign is_sram_b = mem_we[0] || res_from_mem[2] || res_from_mem[0];
+assign data_sram_size = is_sram_w ? 2'b10 :
+                        is_sram_h ? 2'b01 :
+                        is_sram_b ? 2'b00 : 2'b10;
+assign data_sram_addr = is_sram_w ? { alu_result[31:2], 2'b00 } :
+                        is_sram_h ? { alu_result[31:1], 1'b0  } :
+                        is_sram_b ? { alu_result              }:  alu_result;
 assign data_sram_wdata = mem_we[2] ?    rkd_value :
                             mem_we[1] ? {2{rkd_value[15:0]}} :
                             mem_we[0] ? {4{rkd_value[ 7:0]}} : 32'b0;
 
+// ALE exception
 assign isale  = (~(alu_result[1:0] == 2'b0) & (mem_we[2] | res_from_mem[4]))|    // word-aligned check
                 (~(alu_result[0]   == 1'b0) & (mem_we[1] | res_from_mem[3] | res_from_mem[1]));    // half-word-aligned check
 assign newecode = exception ?  ecode:
@@ -347,7 +365,8 @@ always @(posedge clk) begin
         exValidReg <= idValidout;
     end
 end
-assign exReadygo  =  use_div ? (signed_div_dout_valid | unsigned_div_dout_valid) : 1'b1;
+assign exReadygo  =  use_div        ? (signed_div_dout_valid | unsigned_div_dout_valid) :
+                     is_sram_inst   ? (data_sram_addr_ok && data_sram_req) : 1'b1;
 assign exValidout =  exValidReg &&  exReadygo;
 assign exAllowin  = !exValidReg || (exReadygo && memAllowin);
 

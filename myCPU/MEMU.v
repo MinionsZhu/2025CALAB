@@ -21,8 +21,12 @@ module MEMU(
     input  wire [`CSRBUSL] ex2memCsrBus,
     input  wire [`EXPASSBUSL] ex2memPassBus,
 
+    // data to EXU
+    output wire        memStopMemAccess,
+
     // data from data sram
     input  wire [31:0] data_sram_rdata,
+    input  wire        data_sram_data_ok,
 
     // to IDU
     output wire        MEM_to_IDU_csr,
@@ -30,9 +34,7 @@ module MEMU(
     output wire [ 4:0] MEM_to_IDU_dest,
     output wire        MEM_to_IDU_valid,
     output wire [31:0] MEM_to_IDU_forward,
-
-    // data to EXU
-    output wire        memStopMemAccess,
+    output wire        MEM_to_IDU_forward_valid,
 
     // data to WB
     output wire [31:0] mem2wbPC,
@@ -44,18 +46,17 @@ module MEMU(
 );
 
 reg         memValidReg;
-
+reg         dataCancelReg;
 reg  [31:0] inst_reg;
 reg  [31:0] pc_reg;
 reg  [31:0] ex_result_reg;
 reg  [`EXPASSBUSL] signals_pass_reg;
-
 reg  [`CSRBUSL] csr_signals_reg;
 
 wire [31:0] pc;
 wire [31:0] inst;
 wire [31:0] alu_result;
-wire [12:0] signals_pass;
+wire [`EXPASSBUSL] signals_pass;   // exp14 BUG: signals bitwidth change
 wire [ 4:0] dest;
 wire        gr_we;
 wire [ 4:0] res_from_mem;
@@ -63,6 +64,7 @@ wire [ 1:0] mem_offsets;
 wire [31:0] ex_result;
 wire [31:0] shift_rdata;
 wire [31:0] mem_result;
+wire        is_sram_inst;
 
 wire        csr;
 wire        csr_we;
@@ -124,7 +126,7 @@ assign pc           = pc_reg;
 assign inst         = inst_reg;
 assign ex_result    = ex_result_reg;
 assign signals_pass = signals_pass_reg;
-assign {res_from_mem, mem_offsets, gr_we, dest} = signals_pass;
+assign {is_sram_inst, res_from_mem, mem_offsets, gr_we, dest} = signals_pass;
 
 assign shift_rdata = mem_offsets == 2'b00 ?         data_sram_rdata :
                      mem_offsets == 2'b01 ? { 8'b0, data_sram_rdata[31: 8]}:
@@ -150,14 +152,15 @@ assign mem2wbCsrBus   = csr_signals_reg & {`CSRBUSW{!(wb_ex || ertn_flush)}};
 assign mem2wbMemvaddr = ex_result;  // if inst is load/store, then ex_result must be memvaddr
 
 assign mem2wbPassBus = {gr_we, dest} & {`MEMPASSBUSW{!(wb_ex || ertn_flush)}};
-
 assign memStopMemAccess = (exception | memErtnFlush) & memValidReg;
+
 // to IDU
 assign MEM_to_IDU_csr   = csr;
 assign MEM_to_IDU_gr_we = gr_we;
 assign MEM_to_IDU_dest  = dest;
 assign MEM_to_IDU_valid = memValidReg;
 assign MEM_to_IDU_forward = mem2wbResult;
+assign MEM_to_IDU_forward_valid = |res_from_mem ? memValidout : 1'b1;
 
 // MEM status
 always @(posedge clk) begin
@@ -171,8 +174,21 @@ always @(posedge clk) begin
         memValidReg <= exValidout;
     end
 end
-assign memReadygo  =  1'b1;
+
+always @(posedge clk) begin
+    if (reset) begin
+        dataCancelReg <= 1'b0;
+    end
+    else if ((wb_ex | ertn_flush) && 
+            ((exValidout && ex2memPassBus[13]) || ((!memAllowin && !memReadygo) && is_sram_inst))) begin  // exp14 BUG: only sram inst needs to cancel
+        dataCancelReg <= 1'b1;
+    end
+    else if (data_sram_data_ok) begin
+        dataCancelReg <= 1'b0;
+    end
+end
+assign memReadygo  =  is_sram_inst ? (data_sram_data_ok && !dataCancelReg) : 1'b1;
 assign memValidout =  memValidReg &&  memReadygo;
-assign memAllowin  = !memValidReg || (memReadygo && wbAllowin);
+assign memAllowin  = (!memValidReg || (memReadygo && wbAllowin)) && !dataCancelReg;
 
 endmodule

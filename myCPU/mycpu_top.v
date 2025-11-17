@@ -3,16 +3,24 @@ module mycpu_top(
     input  wire        clk,
     input  wire        resetn,
     // inst sram interface
-    output wire        inst_sram_en,
-    output wire [ 3:0] inst_sram_we,
+    output wire        inst_sram_req,
+    output wire        inst_sram_wr,
+    output wire [ 1:0] inst_sram_size,
+    output wire [ 3:0] inst_sram_wstrb,
     output wire [31:0] inst_sram_addr,
     output wire [31:0] inst_sram_wdata,
+    input  wire        inst_sram_addr_ok,
+    input  wire        inst_sram_data_ok,
     input  wire [31:0] inst_sram_rdata,
     // data sram interface
-    output wire        data_sram_en,
-    output wire [ 3:0] data_sram_we,
+    output wire        data_sram_req,
+    output wire        data_sram_wr,
+    output wire [ 1:0] data_sram_size,
+    output wire [ 3:0] data_sram_wstrb,
     output wire [31:0] data_sram_addr,
     output wire [31:0] data_sram_wdata,
+    input  wire        data_sram_addr_ok,
+    input  wire        data_sram_data_ok,
     input  wire [31:0] data_sram_rdata,
     // trace debug interface
     output wire [31:0] debug_wb_pc,
@@ -31,6 +39,7 @@ wire        isadef;
 wire        br_taken_cancel;
 wire        br_taken;
 wire [31:0] br_target;
+wire        br_stall;
 
 wire        csr_re;
 wire        csr_we;
@@ -56,31 +65,36 @@ assign ipi_int_in = 1'b0;
 assign coreid_in  = 32'b0;
 
 IFU u_IFU(
-    .clk            (clk            ),
-    .reset          (reset          ),
+    .clk                (clk            ),
+    .reset              (reset          ),
     // ie
-    .wb_ex          (wb_ex          ),
-    .ertn_flush     (ertn_flush     ),
+    .wb_ex              (wb_ex          ),
+    .ertn_flush         (ertn_flush     ),
     // pc from csr
-    .ex_entry       (ex_entry       ),
-    .ertn_pc        (ertn_pc        ),
+    .ex_entry           (ex_entry       ),
+    .ertn_pc            (ertn_pc        ),
     // inst sram interface
-    .inst_sram_en   (inst_sram_en   ),
-    .inst_sram_we   (inst_sram_we   ),
-    .inst_sram_addr (inst_sram_addr ),
-    .inst_sram_wdata(inst_sram_wdata),
-    .inst_sram_rdata(inst_sram_rdata),
+    .inst_sram_req      (inst_sram_req  ),
+    .inst_sram_wr       (inst_sram_wr   ),
+    .inst_sram_size     (inst_sram_size ),
+    .inst_sram_wstrb    (inst_sram_wstrb),
+    .inst_sram_addr     (inst_sram_addr ),
+    .inst_sram_wdata    (inst_sram_wdata),
+    .inst_sram_addr_ok  (inst_sram_addr_ok),
+    .inst_sram_data_ok  (inst_sram_data_ok),
+    .inst_sram_rdata    (inst_sram_rdata),
     // from IDU
-    .br_taken       (br_taken       ),
-    .br_taken_cancel(br_taken_cancel),
-    .br_target      (br_target      ),
+    .br_taken           (br_taken       ),
+    .br_taken_cancel    (br_taken_cancel),
+    .br_target          (br_target      ),
+    .br_stall           (br_stall       ),
     // to IDU
-    .if2idInst      (if2idInst      ),
-    .if2idPC        (if2idPC        ),
-    .isadef         (isadef         ),      // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
+    .if2idInst          (if2idInst      ),
+    .if2idPC            (if2idPC        ),
+    .isadef             (isadef         ),
     // handshaking signals with IDU
-    .idAllowin      (idAllowin      ),
-    .ifValidout     (ifValidout     )
+    .idAllowin          (idAllowin      ),
+    .ifValidout         (ifValidout     )
 );
 
 wire        exAllowin;
@@ -126,11 +140,12 @@ IDU u_IDU(
     // from IFU
     .if2idPC            (if2idPC            ),
     .if2idInst          (if2idInst          ),
-    .isadef             (isadef             ),   // POTENTIAL BUG: not the same PC between IF & WB when adef occurs.
+    .isadef             (isadef             ),
     // to IFU
     .br_taken           (br_taken           ),
     .br_taken_cancel    (br_taken_cancel    ),
     .br_target          (br_target          ),
+    .br_stall           (br_stall           ),
     // handshaking signals with IFU
     .ifValidout         (ifValidout         ),
     .idAllowin          (idAllowin          ),
@@ -155,6 +170,7 @@ IDU u_IDU(
     .MEM_dest           (MEM_to_IDU_dest    ),
     .MEM_valid          (MEM_to_IDU_valid   ),
     .MEM_to_ID_forward  (MEM_to_IDU_forward ),
+    .MEM_to_ID_forward_valid(MEM_to_IDU_forward_valid),
     .MEM_csr            (MEM_to_IDU_csr     ),
     .WB_gr_we           (WB_to_IDU_gr_we    ),
     .WB_dest            (WB_to_IDU_dest     ),
@@ -170,6 +186,7 @@ IDU u_IDU(
 
 wire        memAllowin;
 wire        exValidout;
+wire        is_sram_inst;
 wire [31:0] ex2memPC;
 wire [31:0] ex2memInst;
 wire [31:0] ex2memResult;
@@ -195,14 +212,14 @@ EXU u_EXU(
     .id2exALUBus            (id2exALUBus        ),
     .id2exPassBus           (id2exPassBus       ),
     .id2exDivBus            (id2exDivBus        ),
+    // from MEM
+    .memStopMemAccess       (memStopMemAccess   ),
     // to MEM
     .ex2memCsrBus           (ex2memCsrBus       ),
     .ex2memPC               (ex2memPC           ),
     .ex2memInst             (ex2memInst         ),
     .ex2memResult           (ex2memResult       ),
     .ex2memPassBus          (ex2memPassBus      ),
-    // data from MEM
-    .memStopMemAccess       (memStopMemAccess   ),
     // to IDU
     .EXU_to_IDU_csr         (EXU_csr            ),
     .EXU_to_IDU_gr_we       (EXU_to_IDU_gr_we   ),
@@ -211,10 +228,13 @@ EXU u_EXU(
     .EXU_to_IDU_forward     (EXU_to_IDU_forward ),
     .EXU_current_is_ld      (EXU_current_is_ld  ),
     // data sram interface
-    .data_sram_en           (data_sram_en       ),
-    .data_sram_we           (data_sram_we       ),
+    .data_sram_req          (data_sram_req      ),
+    .data_sram_wr           (data_sram_wr       ),
+    .data_sram_size         (data_sram_size     ),
+    .data_sram_wstrb        (data_sram_wstrb    ),
     .data_sram_addr         (data_sram_addr     ), 
-    .data_sram_wdata        (data_sram_wdata    )
+    .data_sram_wdata        (data_sram_wdata    ),
+    .data_sram_addr_ok      (data_sram_addr_ok  )
 );
 
 wire        wbAllowin;
@@ -226,39 +246,41 @@ wire [31:0] mem2wbMemvaddr;
 wire [`CSRBUSL] mem2wbCsrBus;
 wire [`MEMPASSBUSL] mem2wbPassBus;
 MEMU u_MEMU(
-    .clk                (clk                ),
-    .reset              (reset              ),
-    .wb_ex              (wb_ex              ),
-    .ertn_flush         (ertn_flush         ),
+    .clk                    (clk                ),
+    .reset                  (reset              ),
+    .wb_ex                  (wb_ex              ),
+    .ertn_flush             (ertn_flush         ),
     // handshaking signals with EXU
-    .exValidout         (exValidout         ), 
-    .memAllowin         (memAllowin         ),
+    .exValidout             (exValidout         ), 
+    .memAllowin             (memAllowin         ),
     // handshaking signals with WB
-    .wbAllowin          (wbAllowin          ),
-    .memValidout        (memValidout        ),
+    .wbAllowin              (wbAllowin          ),
+    .memValidout            (memValidout        ),
     // data from EXU
-    .ex2memCsrBus       (ex2memCsrBus       ),
-    .ex2memPC           (ex2memPC           ),
-    .ex2memInst         (ex2memInst         ), 
-    .ex2memResult       (ex2memResult       ),
-    .ex2memPassBus      (ex2memPassBus      ),
-    // data from data sram
-    .data_sram_rdata    (data_sram_rdata    ),
-    // to IDU
-    .MEM_to_IDU_csr     (MEM_to_IDU_csr     ),
-    .MEM_to_IDU_gr_we   (MEM_to_IDU_gr_we   ),
-    .MEM_to_IDU_dest    (MEM_to_IDU_dest    ),
-    .MEM_to_IDU_valid   (MEM_to_IDU_valid   ),
-    .MEM_to_IDU_forward (MEM_to_IDU_forward ),
+    .ex2memCsrBus           (ex2memCsrBus       ),
+    .ex2memPC               (ex2memPC           ),
+    .ex2memInst             (ex2memInst         ), 
+    .ex2memResult           (ex2memResult       ),
+    .ex2memPassBus          (ex2memPassBus      ),
     // to EXU
-    .memStopMemAccess   (memStopMemAccess   ),
-    // data to WB
-    .mem2wbMemvaddr     (mem2wbMemvaddr     ),
-    .mem2wbPC           (mem2wbPC           ),
-    .mem2wbInst         (mem2wbInst         ),
-    .mem2wbResult       (mem2wbResult       ),
-    .mem2wbPassBus      (mem2wbPassBus      ),
-    .mem2wbCsrBus       (mem2wbCsrBus       )
+    .memStopMemAccess       (memStopMemAccess   ),
+    // data sram interface
+    .data_sram_rdata        (data_sram_rdata    ),
+    .data_sram_data_ok      (data_sram_data_ok  ),
+    // to IDU   
+    .MEM_to_IDU_csr         (MEM_to_IDU_csr     ),
+    .MEM_to_IDU_gr_we       (MEM_to_IDU_gr_we   ),
+    .MEM_to_IDU_dest        (MEM_to_IDU_dest    ),
+    .MEM_to_IDU_valid       (MEM_to_IDU_valid   ),
+    .MEM_to_IDU_forward     (MEM_to_IDU_forward ),
+    .MEM_to_IDU_forward_valid (MEM_to_IDU_forward_valid ),
+    // data to WB   
+    .mem2wbMemvaddr         (mem2wbMemvaddr     ),
+    .mem2wbPC               (mem2wbPC           ),
+    .mem2wbInst             (mem2wbInst         ),
+    .mem2wbResult           (mem2wbResult       ),
+    .mem2wbPassBus          (mem2wbPassBus      ),
+    .mem2wbCsrBus           (mem2wbCsrBus       )
 );
 
 wire [ 4:0] rf_waddr;

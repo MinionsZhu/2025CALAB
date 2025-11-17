@@ -11,8 +11,8 @@
 `define IDPASSBUSL  15:0
 
 // EXU
-`define EXPASSBUSW  13
-`define EXPASSBUSL  12:0
+`define EXPASSBUSW  14
+`define EXPASSBUSL  13:0
 
 // MEMU
 `define MEMPASSBUSW  6
