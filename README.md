@@ -41,45 +41,6 @@ MEM 阶段不需要这样处理，因为 WB 阶段不会阻塞。
 
 ## 暂存器设计
 
-'''
-module data_buffer(
-input wire clk,
-input wire reset,
-input wire dataReq,
-input wire Validin,
-input wire [31:0] data_in,
-output wire Validout,
-output wire [31:0] data_out
-);
-reg [31:0] data_reg;
-reg validReg;
-
-    always @(posedge clk) begin
-        if (reset) begin
-            validReg <= 1'b0;
-        end
-        else if (dataReq) begin
-            validReg <= 1'b0;
-        end
-        else if (Validin) begin
-            validReg <= 1'b1;
-        end
-    end
-
-    always @(posedge clk) begin
-        if (reset) begin
-            data_reg <= 32'h00000000;
-        end
-        else if (Validin) begin
-            data_reg <= data_in;
-        end
-    end
-
-    assign data_out = (Validin) ? data_in : data_reg;
-    assign Validout = validReg || Validin;
-
-endmodule
-'''
 **说明**
 该模块实现了一个数据缓冲寄存器，用于暂存输入数据和其有效信号，确保数据在时序上的正确传递。
 当 Validin 为高时，数据直接通过；当 Validin 为低时，数据从寄存器中输出，保证数据的稳定性。
