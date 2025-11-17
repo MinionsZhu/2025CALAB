@@ -1,0 +1,85 @@
+# EXP14: 添加类 SRAM 总线
+
+## 时序问题解决方式说明
+
+### 1. preIF 发送多个请求而 IF 未及时接收
+
+如果 preIF 阶段在 IF 阶段未接收上一条指令的 data_ok 时已经完成下一条指令的取指握手，会导致 IF 阶段接收多个请求，从而引发错误。
+**解决方式**：preIF 阶段仅在 ifAllowin 为高时发送取指请求。
+同样处理 EX 阶段的取数据请求。
+
+### 2. IF 阶段接收的指令未及时传递到 ID 阶段
+
+如果 IF 阶段已经取到了指令，但 ID 阶段因阻塞等原因未能及时接收，可能会导致 IF 阶段的指令被覆盖或丢失。
+**解决方式**：IF 阶段取到的指令暂存入寄存器，ID 阶段从寄存器中读取指令。
+MEM 阶段不需要这样处理，因为 WB 阶段不会阻塞。
+
+### 3. 重定向的 PC 信号可能未及时被 preIF 阶段接收
+
+如果 preIF 阶段在 ID/WB 阶段发送重定向 PC 信号时正在等待握手，可能会导致 preIF 阶段未能及时接收到重定向的 PC 信号。
+时序分析如下：
+
+1. 第一拍：ID/WB 阶段的指令发送重定向 PC 信号，同时 preIF 阶段正在等待握手，
+2. 第二拍：原先 ID/WB 的指令流到下一级，ID/WB 阶段获得新的指令，preIF 阶段完成握手但未能成功使用重定向的 PC 信号进行取指。
+
+**解决方式**：在 preIF 阶段和能够发出重定向 PC 信号的阶段之间增加暂存器，将重定向的 PC 存入该寄存器中。如果该寄存器 Validout，nextpc 选择该寄存器的值。
+**注意**: 这种方式和书上介绍的方式不太相同，这种方式能够保证 preIF 参与取指的 PC 都是正确的不需要取消的 PC，有更好的时序
+
+### 4. 分支或异常取消时 IF 正在等待握手
+
+**解决方式**: 此时 IF 需要无效化跟随第一个 data_ok 信号返回的指令，故设置一个 instCancelReg 表示有需要取消的指令
+**注意**：
+
+1. 和实验书上的方式不同，如果此时 preifValidout = 1，则不需要取消该指令（见问题 3）
+2. MEM 阶段同样需要这样处理
+
+### 5. 转移指令计算未完成
+
+如果 ID 阶段的 branch 指令需要等待 EX/MEM Load 指令的结果，可能会导致转移指令的计算未完成，从而 preIF 的 nextpc 拿到了错误的值。
+
+**解决方式**：在 ID 阶段检测到需要等待的情况时，向 preIF 发出 br_stall 信号，阻塞 preIF，直到 Load 指令完成。
+
+## 暂存器设计
+
+'''verilog
+module data_buffer(
+input wire clk,
+input wire reset,
+input wire dataReq,
+input wire Validin,
+input wire [31:0] data_in,
+output wire Validout,
+output wire [31:0] data_out
+);
+reg [31:0] data_reg;
+reg validReg;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            validReg <= 1'b0;
+        end
+        else if (dataReq) begin
+            validReg <= 1'b0;
+        end
+        else if (Validin) begin
+            validReg <= 1'b1;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (reset) begin
+            data_reg <= 32'h00000000;
+        end
+        else if (Validin) begin
+            data_reg <= data_in;
+        end
+    end
+
+    assign data_out = (Validin) ? data_in : data_reg;
+    assign Validout = validReg || Validin;
+
+endmodule
+'''
+**说明**
+该模块实现了一个数据缓冲寄存器，用于暂存输入数据和其有效信号，确保数据在时序上的正确传递。
+当 Validin 为高时，数据直接通过；当 Validin 为低时，数据从寄存器中输出，保证数据的稳定性。
