@@ -41,7 +41,7 @@ MEM 阶段不需要这样处理，因为 WB 阶段不会阻塞。
 
 ## 暂存器设计
 
-'''verilog
+'''
 module data_buffer(
 input wire clk,
 input wire reset,
