@@ -46,7 +46,6 @@ module MEMU(
 );
 
 reg         memValidReg;
-reg         dataCancelReg;
 reg  [31:0] inst_reg;
 reg  [31:0] pc_reg;
 reg  [31:0] ex_result_reg;
@@ -175,20 +174,8 @@ always @(posedge clk) begin
     end
 end
 
-always @(posedge clk) begin
-    if (reset) begin
-        dataCancelReg <= 1'b0;
-    end
-    else if ((wb_ex | ertn_flush) && 
-            ((exValidout && ex2memPassBus[13]) || ((!memAllowin && !memReadygo) && is_sram_inst))) begin  // exp14 BUG: only sram inst needs to cancel
-        dataCancelReg <= 1'b1;
-    end
-    else if (data_sram_data_ok) begin
-        dataCancelReg <= 1'b0;
-    end
-end
-assign memReadygo  =  is_sram_inst ? (data_sram_data_ok && !dataCancelReg) : 1'b1;
+assign memReadygo  =  is_sram_inst ? (data_sram_data_ok) : 1'b1;
 assign memValidout =  memValidReg &&  memReadygo;
-assign memAllowin  = (!memValidReg || (memReadygo && wbAllowin)) && !dataCancelReg;
+assign memAllowin  = (!memValidReg || (memReadygo && wbAllowin));
 
 endmodule

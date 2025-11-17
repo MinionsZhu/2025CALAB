@@ -315,8 +315,8 @@ assign ex2memCsrBus = {csr,               // [0]
 /*******************************/
 /*     data sram interface     */
 /*******************************/
-assign is_sram_inst = (|res_from_mem || |mem_we) && exValidReg && !isale;
-assign data_sram_req = is_sram_inst && memAllowin && !memStopMemAccess && !wb_ex && !ertn_flush;  // exp14 BUG: when MEM/WB has exception, do not send req
+assign is_sram_inst = (|res_from_mem || |mem_we) && exValidReg && !isale && !exception;
+assign data_sram_req = is_sram_inst && memAllowin && !memStopMemAccess && !wb_ex && !ertn_flush;
 assign data_sram_wr  = |mem_we;
 assign data_sram_wstrb = (~exValidReg || wb_ex || isale) ? 4'b0 :
                     mem_we[2] ? 4'b1111 :
