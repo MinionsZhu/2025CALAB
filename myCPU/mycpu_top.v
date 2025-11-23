@@ -1,35 +1,142 @@
 `include "busdef.vh"
 module mycpu_top(
-    input  wire        clk,
-    input  wire        resetn,
-    // inst sram interface
-    output wire        inst_sram_req,
-    output wire        inst_sram_wr,
-    output wire [ 1:0] inst_sram_size,
-    output wire [ 3:0] inst_sram_wstrb,
-    output wire [31:0] inst_sram_addr,
-    output wire [31:0] inst_sram_wdata,
-    input  wire        inst_sram_addr_ok,
-    input  wire        inst_sram_data_ok,
-    input  wire [31:0] inst_sram_rdata,
-    // data sram interface
-    output wire        data_sram_req,
-    output wire        data_sram_wr,
-    output wire [ 1:0] data_sram_size,
-    output wire [ 3:0] data_sram_wstrb,
-    output wire [31:0] data_sram_addr,
-    output wire [31:0] data_sram_wdata,
-    input  wire        data_sram_addr_ok,
-    input  wire        data_sram_data_ok,
-    input  wire [31:0] data_sram_rdata,
+    input  wire        aclk,
+    input  wire        aresetn,
+    // axi interface
+    // AR Channel
+    output wire [ 3:0] arid,
+    output wire [31:0] araddr,
+    output wire [ 7:0] arlen,
+    output wire [ 2:0] arsize,
+    output wire [ 1:0] arburst,
+    output wire [ 1:0] arlock,
+    output wire [ 3:0] arcache,
+    output wire [ 2:0] arprot,
+    output wire        arvalid,
+    input  wire        arready,
+    // R Channel
+    input  wire [ 3:0] rid,
+    input  wire [31:0] rdata,
+    input  wire [ 1:0] rresp,
+    input  wire        rlast,
+    input  wire        rvalid,
+    output wire        rready,
+    // AW Channel
+    output wire [ 3:0] awid,
+    output wire [31:0] awaddr,
+    output wire [ 7:0] awlen,
+    output wire [ 2:0] awsize,
+    output wire [ 1:0] awburst,
+    output wire [ 1:0] awlock,
+    output wire [ 3:0] awcache,
+    output wire [ 2:0] awprot,
+    output wire        awvalid,
+    input  wire        awready,
+    // W Channel
+    output wire [ 3:0] wid,
+    output wire [31:0] wdata,
+    output wire [ 3:0] wstrb,
+    output wire        wlast,
+    output wire        wvalid,
+    input  wire        wready,
+    // B Channel
+    input  wire [ 3:0] bid,
+    input  wire [ 1:0] bresp,
+    input  wire        bvalid,
+    output wire        bready,
     // trace debug interface
     output wire [31:0] debug_wb_pc,
     output wire [ 3:0] debug_wb_rf_we,
     output wire [ 4:0] debug_wb_rf_wnum,
     output wire [31:0] debug_wb_rf_wdata
 );
+// inst sram interface
+wire        inst_sram_req;
+wire        inst_sram_wr;
+wire [ 1:0] inst_sram_size;
+wire [ 3:0] inst_sram_wstrb;
+wire [31:0] inst_sram_addr;
+wire [31:0] inst_sram_wdata;
+wire        inst_sram_addr_ok;
+wire        inst_sram_data_ok;
+wire [31:0] inst_sram_rdata;
+// data sram interface
+wire        data_sram_req;
+wire        data_sram_wr;
+wire [ 1:0] data_sram_size;
+wire [ 3:0] data_sram_wstrb;
+wire [31:0] data_sram_addr;
+wire [31:0] data_sram_wdata;
+wire        data_sram_addr_ok;
+wire        data_sram_data_ok;
+wire [31:0] data_sram_rdata;
+// connect cpu_axi_bridge
+cpu_axi_bridge u_cpu_axi_bridge(
+    .clk                (aclk                ),
+    .resetn             (aresetn             ),
+    // inst sram interface
+    .inst_req           (inst_sram_req      ),
+    .inst_wr            (inst_sram_wr       ),
+    .inst_size          (inst_sram_size     ),
+    .inst_wstrb         (inst_sram_wstrb    ),
+    .inst_addr          (inst_sram_addr     ),
+    .inst_wdata         (inst_sram_wdata    ),
+    .inst_addr_ok       (inst_sram_addr_ok  ),
+    .inst_data_ok       (inst_sram_data_ok  ),
+    .inst_rdata         (inst_sram_rdata    ),
+    // data sram interface
+    .data_req           (data_sram_req      ),
+    .data_wr            (data_sram_wr       ),
+    .data_size          (data_sram_size     ),
+    .data_wstrb         (data_sram_wstrb    ),
+    .data_addr          (data_sram_addr     ),
+    .data_wdata         (data_sram_wdata    ),
+    .data_addr_ok       (data_sram_addr_ok  ),
+    .data_data_ok       (data_sram_data_ok  ),
+    .data_rdata         (data_sram_rdata    ),
+    // AXI interface
+    .arid               (arid               ),
+    .araddr             (araddr             ),
+    .arlen              (arlen              ),
+    .arsize             (arsize             ),
+    .arburst            (arburst            ),
+    .arlock             (arlock             ),
+    .arcache            (arcache            ),
+    .arprot             (arprot             ),
+    .arvalid            (arvalid            ),
+    .arready            (arready            ),
+    .rid                (rid                ),
+    .rdata              (rdata              ),
+    .rresp              (rresp              ),
+    .rlast              (rlast              ),
+    .rvalid             (rvalid             ),
+    .rready             (rready             ),
+    .awid               (awid               ),
+    .awaddr             (awaddr             ),
+    .awlen              (awlen              ),
+    .awsize             (awsize             ),
+    .awburst            (awburst            ),
+    .awlock             (awlock             ),
+    .awcache            (awcache            ),
+    .awprot             (awprot             ),
+    .awvalid            (awvalid            ),
+    .awready            (awready            ),
+    .wid                (wid                ),
+    .wdata              (wdata              ),
+    .wstrb              (wstrb              ),
+    .wlast              (wlast              ),
+    .wvalid             (wvalid             ),
+    .wready             (wready             ),
+    .bid                (bid                ),
+    .bresp              (bresp              ),
+    .bvalid             (bvalid             ),
+    .bready             (bready             )
+);
+
+
+
 wire        reset;
-assign      reset = ~resetn;
+assign      reset = ~aresetn;
 
 wire        idAllowin;
 wire        ifValidout;
@@ -65,7 +172,7 @@ assign ipi_int_in = 1'b0;
 assign coreid_in  = 32'b0;
 
 IFU u_IFU(
-    .clk                (clk            ),
+    .clk                (aclk            ),
     .reset              (reset          ),
     // ie
     .wb_ex              (wb_ex          ),
@@ -131,7 +238,7 @@ wire        MEM_csr;
 wire        WB_csr;
 
 IDU u_IDU(
-    .clk                (clk                ),
+    .clk                (aclk                ),
     .reset              (reset              ),
     // ie
     .wb_ex              (wb_ex              ),
@@ -194,7 +301,7 @@ wire        memStopMemAccess;
 wire [`CSRBUSL] ex2memCsrBus;
 wire [`EXPASSBUSL] ex2memPassBus;
 EXU u_EXU(
-    .clk                    (clk                ),
+    .clk                    (aclk                ),
     .reset                  (reset              ),
     // ie
     .wb_ex                  (wb_ex              ),
@@ -246,7 +353,7 @@ wire [31:0] mem2wbMemvaddr;
 wire [`CSRBUSL] mem2wbCsrBus;
 wire [`MEMPASSBUSL] mem2wbPassBus;
 MEMU u_MEMU(
-    .clk                    (clk                ),
+    .clk                    (aclk                ),
     .reset                  (reset              ),
     .wb_ex                  (wb_ex              ),
     .ertn_flush             (ertn_flush         ),
@@ -287,7 +394,7 @@ wire [ 4:0] rf_waddr;
 wire [31:0] rf_wdata;
 wire        rf_we;
 WBU u_WBU(
-    .clk                (clk                ),
+    .clk                (aclk                ),
     .reset              (reset              ),
     // handshaking signals with MEM
     .memValidout        (memValidout        ),
@@ -332,7 +439,7 @@ WBU u_WBU(
 );
 
 regfile u_regfile(
-    .clk    (clk      ),
+    .clk    (aclk      ),
     .raddr1 (rf_raddr1),
     .rdata1 (rf_rdata1),
     .raddr2 (rf_raddr2),
@@ -343,7 +450,7 @@ regfile u_regfile(
 );
 
 csr_regs u_csr_regs(
-    .clk            (clk            ),
+    .clk            (aclk            ),
     .reset          (reset          ),
     .csr_num        (csr_num        ),
     .csr_re         (csr_re         ),
