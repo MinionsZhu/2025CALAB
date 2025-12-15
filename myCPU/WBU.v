@@ -16,6 +16,7 @@ module WBU(
     input  wire [31:0] mem2wbMemvaddr,
     input  wire [`CSRBUSL] mem2wbCsrBus,
     input  wire [`MEMPASSBUSL] mem2wbPassBus,
+    input  wire [9:0] mem2wbTLBBus,
 
     // register file interface
     output wire [ 4:0] rf_waddr,
@@ -47,7 +48,26 @@ module WBU(
     output wire        wb_ex,
     output wire [ 5:0] wb_ecode,
     output wire [ 8:0] wb_esubcode,
-    output wire [31:0] wb_vaddr
+    output wire [31:0] wb_vaddr,
+
+    // TLB and CSR read/write control signals
+    // to TLB
+    output wire        tlbwe,
+    output wire        tlbfill,
+    output wire [ 3:0] tlbfill_randidx,
+    // to CSR
+    output wire        tlbsrch,
+    output wire        tlbrd,
+    output wire        tlbsrch_found,
+    output wire [ 3:0] tlbsrch_index,
+
+    // refetch signal
+    input  wire        mem2wbRefetch,
+    input  wire        mem2wbChangeTLB,
+    input  wire        mem2wbChangeTLBEHI,
+    output wire        wbRefetch,
+    output wire        wbChangeTLB,
+    output wire        wbChangeTLBEHI,
 );
 
 reg [`CSRBUSL] csr_signals_reg;
@@ -58,6 +78,10 @@ reg [ 31:0] pc_reg;
 reg [ 31:0] result_reg;
 reg [`MEMPASSBUSL] signals_pass_reg;
 reg [ 31:0] MEM_memvaddr_to_WB_reg;
+reg [ 9:0] tlb_signals_reg;
+reg        refetch;
+reg        changeTLB;
+reg        changeTLBEHI;
 
 wire [31:0] pc;
 wire [31:0] inst;
@@ -125,6 +149,36 @@ always @(posedge clk) begin
         signals_pass_reg <= mem2wbPassBus;
     end
 end
+always @(posedge clk) begin
+    if (reset) begin
+        tlb_signals_reg <= 10'b0;
+    end
+    else if (wbAllowin && memValidout) begin
+        tlb_signals_reg <= mem2wbTLBBus;
+    end
+end
+always @(posedge clk) begin
+    if (reset) begin
+        refetch <= 1'b0;
+    end
+    else if (wbAllowin && memValidout) begin
+        refetch <= mem2wbRefetch;
+    end
+end
+assign wbRefetch = refetch && wbValidReg && (WBU_ecode != 6'h0);  // only when valid, refetch takes effect except for normal instruction
+always @(posedge clk) begin
+    if (reset) begin
+        changeTLB <= 1'b0;
+        changeTLBEHI <= 1'b0;
+    end
+    else if (wbAllowin && memValidout) begin
+        changeTLB <= mem2wbChangeTLB;
+        changeTLBEHI <= mem2wbChangeTLBEHI;
+    end
+end
+assign wbChangeTLB = changeTLB && wbValidReg;
+assign wbChangeTLBEHI = changeTLBEHI && wbValidReg;
+
 assign pc = pc_reg;
 assign inst = inst_reg;
 assign result = result_reg;
@@ -133,7 +187,7 @@ assign gr_we = signals_pass[5];
 assign dest = signals_pass[4:0];
 assign rf_waddr = dest;
 assign rf_wdata = WBU_csr ? csr_rvalue : result;
-assign rf_we = gr_we & wbValidReg & ~WBU_exception;
+assign rf_we = gr_we & wbValidReg & ~WBU_exception & ~refetch;
 
 // to IDU
 assign WB_to_IDU_gr_we = gr_we;
@@ -157,18 +211,40 @@ end
 // csr signals
 assign {WBU_csr, WBU_csr_we, WBU_csr_num, WBU_csr_wmask, WBU_csr_wvalue, WBU_exception, WBU_ecode, WBU_syscall_code, WBU_ertn_flush} = csr_signals_reg;
 assign csr_re = 1'b1;
-assign csr_we = WBU_csr_we;
+assign csr_we = WBU_csr_we & ~refetch & wbValidReg;
 assign csr_num = WBU_csr_num;
 assign csr_wmask = WBU_csr_wmask;
 assign csr_wvalue = WBU_csr_wvalue;
 assign wb_pc = pc;
-assign ertn_flush = WBU_ertn_flush & wbValidReg;  // only when valid, ertn takes effect
-assign wb_ex = WBU_exception & wbValidReg;  // only when valid, exception takes effect
+assign ertn_flush = WBU_ertn_flush & wbValidReg & ~refetch;  // only when valid, ertn takes effect
+assign wb_ex = WBU_exception & wbValidReg & ~(refetch && WBU_ecode != 6'h0);  // only when valid, exception takes effect
 assign wb_ecode = WBU_ecode;
 assign wb_esubcode = 9'h0;  // now there is no ADEM exception.
 assign WB_to_IDU_csr = WBU_csr;
 assign wb_vaddr = MEM_memvaddr_to_WB_reg;
 
+// TLB signals
+wire is_tlbsrch, is_tlbrd, is_tlbwr, is_tlbfill, is_invtlb, tlbsrch_found_wire;
+wire [3:0] tlbsrch_index_wire;
+assign {is_tlbsrch, is_tlbrd, is_tlbwr, is_tlbfill, is_invtlb, tlbsrch_found_wire, tlbsrch_index_wire} = tlb_signals_reg;
+assign tlbsrch = is_tlbsrch & wbValidReg & ~WBU_exception & ~refetch;
+assign tlbsrch_found = tlbsrch_found_wire;
+assign tlbsrch_index = tlbsrch_index_wire;
+assign tlbrd  = is_tlbrd  & wbValidReg & ~WBU_exception & ~refetch;
+assign tlbwe  = (is_tlbwr || is_tlbfill)  & wbValidReg & ~WBU_exception & ~refetch;
+assign tlbfill = is_tlbfill & wbValidReg & ~WBU_exception & ~refetch;
+reg [3:0] tlbfill_randidx_reg;
+always @(posedge clk) begin
+    if (reset) begin
+        tlbfill_randidx_reg <= 4'b0;
+    end
+    else if (tlbfill) begin
+        tlbfill_randidx_reg <= tlbfill_randidx_reg + 4'b1;
+    end
+end
+assign tlbfill_randidx = tlbfill_randidx_reg;
+
+// handshaking signals
 assign wbReadygo      = 1'b1;
 assign wbValidout     = wbValidReg && wbReadygo;
 assign wbAllowin      = !wbValidReg || (wbReadygo);

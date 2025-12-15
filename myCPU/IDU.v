@@ -1,5 +1,6 @@
 `include "busdef.vh"
 `include "ecodes.vh"
+`include "csr.vh"
 module IDU(
     input  wire        clk,
     input  wire        reset,
@@ -33,6 +34,7 @@ module IDU(
     output wire [`CSRBUSL] id2exCsrBus,
     output wire [`ALUBUSL] id2exALUBus,
     output wire [`IDPASSBUSL] id2exPassBus,
+    output wire [9:0] id2exTLBBus,
 
     // forwarding from EXU/MEM/WB stage
     input  wire [ 4:0] EXU_dest,
@@ -57,12 +59,19 @@ module IDU(
     output wire [ 4:0] rf_raddr1,
     output wire [ 4:0] rf_raddr2,
     input  wire [31:0] rf_rdata1,
-    input  wire [31:0] rf_rdata2
+    input  wire [31:0] rf_rdata2,
+
+    // refetch signal        
+    input  wire        if2idRefetch,
+    output wire        id2exRefetch,
+    output wire        id2exChangeTLB,
+    output wire        id2exChangeTLBEHI // stall signal for EHI write
 );
 
 reg         idValidReg;
 reg  [31:0] inst_reg;
 reg  [31:0] pc_reg;
+reg         refetch;
 
 wire [31:0] inst;
 wire [31:0] pc;
@@ -192,6 +201,16 @@ always @(posedge clk) begin
     end
 end
 
+always @(posedge clk) begin
+    if (reset) begin
+        refetch <= 1'b0;
+    end
+    else if(ifValidout && idAllowin) begin
+        refetch <= if2idRefetch;
+    end
+end
+assign id2exRefetch = refetch;
+
 ///////////////////////////////////////////////////////////////////////
 //////                          decoders                        ///////
 ///////////////////////////////////////////////////////////////////////
@@ -275,6 +294,12 @@ assign inst_rdcntvl_w = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] 
 assign inst_rdcntvh_w = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] & op_19_15_d[5'h00] & (rk == 5'h19) & (rj == 5'h00);
 assign inst_rdcntid_w = op_31_26_d[6'h00] & op_25_22_d[4'h0] & op_21_20_d[2'h0] & op_19_15_d[5'h00] & (rk == 5'h18) & (rd == 5'h00);
 
+assign inst_tlbsrch = op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & op_19_15_d[5'h10] & rk == 5'ha & rj == 5'h0 & rd == 5'h0;
+assign inst_tlbrd   = op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & op_19_15_d[5'h10] & rk == 5'hb & rj == 5'h0 & rd == 5'h0;
+assign inst_tlbwr   = op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & op_19_15_d[5'h10] & rk == 5'hc & rj == 5'h0 & rd == 5'h0;
+assign inst_tlbfill = op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & op_19_15_d[5'h10] & rk == 5'hd & rj == 5'h0 & rd == 5'h0;
+assign inst_invtlb  = op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & op_19_15_d[5'h13];
+
 assign allinst =   (inst_rdcntvl_w | inst_rdcntvh_w | inst_rdcntid_w |
                     inst_add_w  | inst_sub_w  | inst_slt    | inst_sltu  |
                     inst_nor    | inst_and    | inst_or     | inst_xor   |
@@ -295,7 +320,8 @@ assign allinst =   (inst_rdcntvl_w | inst_rdcntvh_w | inst_rdcntid_w |
                     inst_lu12i_w|inst_pcaddu12i|
                     inst_break  | inst_syscall|
                     inst_csrrd  | inst_csrwr  | inst_csrxchg|
-                    inst_ertn);
+                    inst_ertn   | inst_tlbsrch | inst_tlbrd | inst_tlbwr  |
+                    inst_tlbfill| inst_invtlb );
 assign ine = ~(allinst);    // if fetch address exception, then inst is invalid
 
 assign need_ui5   = inst_slli_w | inst_srli_w | inst_srai_w;
@@ -415,9 +441,9 @@ always @(posedge clk) begin
         preciseExcptReg <= 7'b0;    // to keep precise exception info
     end
     else if(idAllowin & ifValidout) begin   // for it is from if, it should be controled by idAllowin & ifValidout
-        preciseExcptReg <= {isintr | isadef,
+        preciseExcptReg <= {isintr | isadef | if2idRefetch,
                             isintr ? `ECODE_INT :
-                            isadef ? `ECODE_ADE : `ECODE_INT};   // to keep precise exception info
+                            isadef ? `ECODE_ADE : `ECODE_ADE};   // to keep precise exception info
     end
 end
 assign csr_raw = EXU_csr && (rf1_raw_exu || rf2_raw_exu) 
@@ -557,6 +583,27 @@ assign id2exPassBus = {
     inst_rdcntvh_w, // [14]
     inst_rdcntvl_w  // [15]
 };
+
+////////////////////////////////////////////////////////////////////////
+//////                        TLB signals                        ///////
+////////////////////////////////////////////////////////////////////////
+wire [4:0] invtlb_opcode;
+assign invtlb_opcode = rd;
+assign id2exTLBBus = {
+    inst_tlbsrch,   // [0]
+    inst_tlbrd,     // [1]
+    inst_tlbwr,     // [2]
+    inst_tlbfill,   // [3]
+    inst_invtlb,    // [4]
+    invtlb_opcode   // [9:5]
+};
+assign id2exChangeTLB = (inst_tlbwr | inst_tlbfill | inst_tlbrd | inst_invtlb |
+                        (csr_we & (csr_num == `CSR_CRMD 
+                        | csr_num == `CSR_DWM0 
+                        | csr_num == `CSR_DWM1
+                        | csr_num == `CSR_ASID
+                        ))) & idValidReg;
+assign id2exChangeTLBEHI = (csr_we & (csr_num == `CSR_TLBEHI)) & idValidReg;
 
 ////////////////////////////////////////////////////////////////////////
 //////                      register interface                   ///////

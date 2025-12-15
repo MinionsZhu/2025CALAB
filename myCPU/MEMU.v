@@ -20,6 +20,7 @@ module MEMU(
     input  wire [31:0] ex2memResult,
     input  wire [`CSRBUSL] ex2memCsrBus,
     input  wire [`EXPASSBUSL] ex2memPassBus,
+    input  wire [ 9:0] ex2memTLBBus,
 
     // data to EXU
     output wire        memStopMemAccess,
@@ -42,7 +43,16 @@ module MEMU(
     output wire [31:0] mem2wbResult,
     output wire [31:0] mem2wbMemvaddr,
     output wire [`CSRBUSL] mem2wbCsrBus,
-    output wire [`MEMPASSBUSL] mem2wbPassBus
+    output wire [`MEMPASSBUSL] mem2wbPassBus,
+    output wire [9:0] mem2wbTLBBus,
+
+    // refetch and change TLB signals
+    input  wire        ex2memRefetch,
+    input  wire        ex2memChangeTLB,
+    input  wire        ex2memChangeTLBEHI,
+    output wire        mem2wbRefetch,
+    output wire        mem2wbChangeTLB,
+    output wire        mem2wbChangeTLBEHI
 );
 
 reg         memValidReg;
@@ -51,6 +61,10 @@ reg  [31:0] pc_reg;
 reg  [31:0] ex_result_reg;
 reg  [`EXPASSBUSL] signals_pass_reg;
 reg  [`CSRBUSL] csr_signals_reg;
+reg  [9:0] tlb_signals_reg;
+reg         refetch;
+reg         changeTLB;
+reg         changeTLBEHI;
 
 wire [31:0] pc;
 wire [31:0] inst;
@@ -119,6 +133,38 @@ always @(posedge clk) begin
         signals_pass_reg <= ex2memPassBus;
     end
 end
+
+always @(posedge clk) begin
+    if (reset) begin
+        tlb_signals_reg <= 10'b0;
+    end
+    else if (memAllowin && exValidout) begin
+        tlb_signals_reg <= ex2memTLBBus;
+    end
+end
+assign mem2wbTLBBus = tlb_signals_reg;
+always @(posedge clk) begin
+    if (reset) begin
+        refetch <= 1'b0;
+    end
+    else if (memAllowin && exValidout) begin
+        refetch <= ex2memRefetch;
+    end
+end
+assign mem2wbRefetch = refetch;
+always @(posedge clk) begin
+    if (reset) begin
+        changeTLB <= 1'b0;
+        changeTLBEHI <= 1'b0;
+    end
+    else if (memAllowin && exValidout) begin
+        changeTLB <= ex2memChangeTLB;
+        changeTLBEHI <= ex2memChangeTLBEHI;
+    end
+end
+assign mem2wbChangeTLB = changeTLB && memValidReg;
+assign mem2wbChangeTLBEHI = changeTLBEHI && memValidReg;
+
 assign {csr, csr_we, csr_num, csr_wmask, csr_wvalue, exception, ecode, syscall_code, memErtnFlush} = csr_signals_reg;
 
 assign pc           = pc_reg;

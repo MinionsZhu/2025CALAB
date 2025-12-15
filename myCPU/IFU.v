@@ -35,7 +35,13 @@ module IFU(
 
     // handshaking signals with IDU
     input  wire        idAllowin,
-    output wire        ifValidout
+    output wire        ifValidout,
+
+    // refetch signal
+    input  wire        changeTLB_stall,
+    input  wire        wb_refetch,
+    input  wire        wb_pc,
+    output wire        if2idRefetch
 );
     // preif stage
     reg         preifValidReg;
@@ -51,6 +57,7 @@ module IFU(
     reg         ifValidReg;
     reg  [31:0] pc;
     reg         instCancelReg;
+    reg         refetch;
     wire [31:0] seq_pc;
     wire        instValidout;
 
@@ -72,8 +79,9 @@ module IFU(
 
     assign pcValidin = wb_ex || ertn_flush || br_taken_cancel;    // nextpc redirect condition
     assign nextpc_in = (wb_ex)    ? ex_entry
-                      : ertn_flush ? ertn_pc
-                      : br_taken   ? br_target
+                      : wb_refetch ? wb_pc
+                      : ertn_flush  ? ertn_pc
+                      : br_taken    ? br_target
                       : seq_pc;     // do not use, only for completeness
 
     data_buffer if_inst_buffer(
@@ -131,6 +139,15 @@ module IFU(
 
     always @(posedge clk) begin
         if (reset) begin
+            refetch <= 1'b0;
+        end
+        else if (ifAllowin) begin
+            refetch <= changeTLB_stall;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (reset) begin
             instCancelReg <= 1'b0;
         end
         else if (inst_sram_data_ok) begin   // exp14 BUG: it should has higher priority than (br_taken_cancel | wb_ex | ertn_flush) && (!ifAllowin && !ifReadygo)
@@ -142,7 +159,7 @@ module IFU(
     end
 
     assign ifValidout = ifValidReg && ifReadygo;    // exp14 BUG: do not write (ifValidReg || instValidout) && ifReadygo
-    assign ifReadygo = (inst_sram_data_ok || instValidout) && !instCancelReg;
+    assign ifReadygo = (inst_sram_data_ok || instValidout) && !instCancelReg && changeTLB_stall;
     assign ifAllowin = (!ifValidReg || (ifReadygo && idAllowin)) && !instCancelReg;
 
     assign seq_pc    = pc + 4;
@@ -170,6 +187,7 @@ module IFU(
         end
     end
     assign isadef = regAdef; // csr_signal_reg for IF stage
+    assign if2idRefetch = refetch;
 
 endmodule
 

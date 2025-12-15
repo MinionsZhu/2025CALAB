@@ -22,6 +22,7 @@ module EXU(
     input  wire [`CSRBUSL] id2exCsrBus,
     input  wire [`ALUBUSL] id2exALUBus,
     input  wire [`IDPASSBUSL] id2exPassBus,
+    input  wire [9:0] id2exTLBBus,
 
     // data from MEM
     input  wire        memStopMemAccess,
@@ -32,6 +33,7 @@ module EXU(
     output wire [31:0] ex2memResult,
     output wire [`CSRBUSL] ex2memCsrBus,
     output wire [`EXPASSBUSL] ex2memPassBus,
+    output wire [ 9:0] ex2memTLBBus,
 
     // to IDU, for raw
     output wire        EXU_to_IDU_csr,
@@ -48,7 +50,35 @@ module EXU(
     output wire [ 3:0] data_sram_wstrb,
     output wire [31:0] data_sram_addr,
     output wire [31:0] data_sram_wdata,
-    input  wire        data_sram_addr_ok
+    input  wire        data_sram_addr_ok,
+
+    // TLB search interface (for Load/Store/tlbsrch instructions)
+    output wire [18:0] s1_vppn,
+    output wire        s1_va_bit12,
+    output wire [ 9:0] s1_asid,
+    input  wire        s1_found,
+    input  wire [ 3:0] s1_index,  // 3=$clog2(TLBNUM)-1
+    input  wire [19:0] s1_ppn,
+    input  wire [ 5:0] s1_ps,
+    input  wire [ 1:0] s1_plv,
+    input  wire [ 1:0] s1_mat,
+    input  wire        s1_d,
+    input  wire        s1_v,
+    // for invtlb instruction(to TLB)
+    output wire        invtlb_valid,
+    output wire [ 4:0] invtlb_op,
+    // for tlbsrch use(from csr)
+    input  wire [18:0] csr_tlbehi_vppn,
+    input  wire [ 9:0] csr_asid,
+
+    // refetch signal
+    input  wire        tlb_stall,
+    input  wire        id2exRefetch,
+    input  wire        id2exChangeTLB,
+    input  wire        id2exChangeTLBEHI,
+    output wire        ex2memRefetch,
+    output wire        ex2memChangeTLB,
+    output wire        ex2memChangeTLBEHI
 );
 reg         exValidReg;
 
@@ -57,6 +87,10 @@ reg [ 31:0] pc_reg;
 reg [  4:0] div_signals_reg;
 reg [`ALUBUSL] alu_signals_reg;
 reg [`IDPASSBUSL] pass_signals_reg;
+reg [9:0]   tlb_signals_reg;
+reg         refetch;
+reg         changeTLB;
+reg         changeTLBEHI;
 
 reg         signed_div_dividend_tvalid_reg;
 reg         signed_div_divisor_tvalid_reg;
@@ -170,6 +204,35 @@ always @(posedge clk) begin
         pass_signals_reg <= id2exPassBus;
     end
 end
+always @(posedge clk) begin
+    if (reset) begin
+        tlb_signals_reg <= 10'b0;
+    end
+    else if (exAllowin && idValidout) begin
+        tlb_signals_reg <= id2exTLBBus;
+    end
+end
+always @(posedge clk) begin
+    if (reset) begin
+        refetch <= 1'b0;
+    end
+    else if (exAllowin && idValidout) begin
+        refetch <= id2exRefetch;
+    end
+end
+assign ex2memRefetch = refetch;
+always @(posedge clk) begin
+    if (reset) begin
+        changeTLB <= 1'b0;
+        changeTLBEHI <= 1'b0;
+    end
+    else if (exAllowin && idValidout) begin
+        changeTLB <= id2exChangeTLB;
+        changeTLBEHI <= id2exChangeTLBEHI;
+    end
+end
+assign ex2memChangeTLB = changeTLB && exValidReg;
+assign ex2memChangeTLBEHI = changeTLBEHI && exValidReg;
 always @(posedge clk) begin
     if (reset) begin
         div_signals_reg <= 5'b0;
@@ -315,7 +378,7 @@ assign ex2memCsrBus = {csr,               // [0]
 /*******************************/
 /*     data sram interface     */
 /*******************************/
-assign is_sram_inst = (|res_from_mem || |mem_we) && exValidReg && !isale && !exception;
+assign is_sram_inst = (|res_from_mem || |mem_we) && exValidReg && !isale && !exception && !refetch;
 assign data_sram_req = is_sram_inst && memAllowin && !memStopMemAccess && !wb_ex && !ertn_flush;
 assign data_sram_wr  = |mem_we;
 assign data_sram_wstrb = (~exValidReg || wb_ex || isale) ? 4'b0 :
@@ -346,6 +409,19 @@ assign newecode = exception ?  ecode:
                     isale     ? `ECODE_ALE:
                                 `ECODE_INT;   // to keep priority of exceptions
 
+// TLB search interface
+wire is_tlbsrch, is_tlbrd, is_tlbwr, is_tlbfill, is_invtlb;
+wire [4:0] invtlb_opcode;
+wire invuse_asid, invuse_vppn;
+assign {is_tlbsrch, is_tlbrd, is_tlbwr, is_tlbfill, is_invtlb, invtlb_opcode} = tlb_signals_reg;
+assign invuse_asid = invtlb_opcode == 5'h4 || invtlb_opcode == 5'h5 || invtlb_opcode == 5'h6;
+assign invuse_vppn = invtlb_opcode == 5'h5 || invtlb_opcode == 5'h6;
+assign {s1_vppn, s1_va_bit12} = (is_tlbsrch) ? {csr_tlbehi_vppn, 1'b0} : (is_invtlb && invuse_vppn) ? rkd_value[31:12] : 20'b0;
+assign s1_asid = (is_tlbsrch) ? csr_asid : (is_invtlb && invuse_asid) ? rj_value[9:0] : 10'b0;
+assign invtlb_valid = exValidReg && is_invtlb && !wb_ex && !ertn_flush && !isale && !exception && !refetch;
+assign invtlb_op = invtlb_opcode;
+assign ex2memTLBBus = {is_tlbsrch, is_tlbrd, is_tlbwr, is_tlbfill, is_invtlb, invtlb_opcode, s1_found, s1_index};
+
 // to IDU
 assign EXU_to_IDU_gr_we = gr_we;
 assign EXU_to_IDU_dest  = dest;
@@ -366,7 +442,8 @@ always @(posedge clk) begin
     end
 end
 assign exReadygo  =  use_div        ? (signed_div_dout_valid | unsigned_div_dout_valid) :
-                     is_sram_inst   ? (data_sram_addr_ok && data_sram_req) : 1'b1;
+                     is_sram_inst   ? (data_sram_addr_ok && data_sram_req) : 
+                     tlb_stall      ? 1'b0 : 1'b1;
 assign exValidout =  exValidReg &&  exReadygo;
 assign exAllowin  = !exValidReg || (exReadygo && memAllowin);
 

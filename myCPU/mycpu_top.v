@@ -133,8 +133,6 @@ cpu_axi_bridge u_cpu_axi_bridge(
     .bready             (bready             )
 );
 
-
-
 wire        reset;
 assign      reset = ~aresetn;
 
@@ -171,6 +169,101 @@ assign hw_int_in  = 8'b0;
 assign ipi_int_in = 1'b0;
 assign coreid_in  = 32'b0;
 
+// TLB search port 0 (for fetch)
+wire [18:0] s0_vppn;
+wire        s0_va_bit12;
+wire [ 9:0] s0_asid;
+wire        s0_found;
+wire [ 3:0] s0_index;
+wire [19:0] s0_ppn;
+wire [ 5:0] s0_ps;
+wire [ 1:0] s0_plv;
+wire [ 1:0] s0_mat;
+wire        s0_d;
+wire        s0_v;
+
+// TLB search port 1 (for load/store)
+wire [18:0] s1_vppn;
+wire        s1_va_bit12;
+wire [ 9:0] s1_asid;
+wire        s1_found;
+wire [ 3:0] s1_index;
+wire [19:0] s1_ppn;
+wire [ 5:0] s1_ps;
+wire [ 1:0] s1_plv;
+wire [ 1:0] s1_mat;
+wire        s1_d;
+wire        s1_v;
+
+// TLB write port
+wire        tlb_we;
+wire [ 3:0] tlb_w_index;
+wire        tlb_w_e;
+wire [18:0] tlb_w_vppn;
+wire [ 5:0] tlb_w_ps;
+wire [ 9:0] tlb_w_asid;
+wire        tlb_w_g;
+wire [19:0] tlb_w_ppn0;
+wire [ 1:0] tlb_w_plv0;
+wire [ 1:0] tlb_w_mat0;
+wire        tlb_w_d0;
+wire        tlb_w_v0;
+wire [19:0] tlb_w_ppn1;
+wire [ 1:0] tlb_w_plv1;
+wire [ 1:0] tlb_w_mat1;
+wire        tlb_w_d1;
+wire        tlb_w_v1;
+
+// TLB read port
+wire [ 3:0] tlb_r_index;
+wire        tlb_r_e;
+wire [18:0] tlb_r_vppn;
+wire [ 5:0] tlb_r_ps;
+wire [ 9:0] tlb_r_asid;
+wire        tlb_r_g;
+wire [19:0] tlb_r_ppn0;
+wire [ 1:0] tlb_r_plv0;
+wire [ 1:0] tlb_r_mat0;
+wire        tlb_r_d0;
+wire        tlb_r_v0;
+wire [19:0] tlb_r_ppn1;
+wire [ 1:0] tlb_r_plv1;
+wire [ 1:0] tlb_r_mat1;
+wire        tlb_r_d1;
+wire        tlb_r_v1;
+
+// TLB invtlb
+wire        invtlb_valid;
+wire [ 4:0] invtlb_op;
+
+// TLB control signals from WBU
+wire        tlbsrch;
+wire        tlbrd;
+wire        tlbfill;
+wire [ 3:0] tlbfill_randidx;
+wire        tlbsrch_found;
+wire [ 3:0] tlbsrch_index;
+
+// refetch and changeTLB signals
+wire        if2idRefetch;
+wire        id2exRefetch;
+wire        id2exChangeTLB;
+wire        id2exChangeTLBEHI;
+wire        ex2memRefetch;
+wire        ex2memChangeTLB;
+wire        ex2memChangeTLBEHI;
+wire        mem2wbRefetch;
+wire        mem2wbChangeTLB;
+wire        mem2wbChangeTLBEHI;
+wire        wbRefetch;
+wire        wbChangeTLB;
+wire        wbChangeTLBEHI;
+wire        changeTLB_stall;
+wire        tlb_stall;
+
+assign changeTLB_stall = id2exChangeTLB | ex2memChangeTLB | mem2wbChangeTLB | wbChangeTLB;
+assign tlb_stall = mem2wbChangeTLBEHI | wbChangeTLBEHI;
+
 IFU u_IFU(
     .clk                (aclk            ),
     .reset              (reset          ),
@@ -201,7 +294,12 @@ IFU u_IFU(
     .isadef             (isadef         ),
     // handshaking signals with IDU
     .idAllowin          (idAllowin      ),
-    .ifValidout         (ifValidout     )
+    .ifValidout         (ifValidout     ),
+    // refetch signal
+    .changeTLB_stall    (changeTLB_stall),
+    .wb_refetch         (wbRefetch      ),
+    .wb_pc              (wb_pc          ),
+    .if2idRefetch       (if2idRefetch   )
 );
 
 wire        exAllowin;
@@ -232,6 +330,9 @@ wire [31:0] WB_to_IDU_forward;
 
 wire [ 4:0] id2exDivBus;
 wire [`CSRBUSL] id2exCsrBus;
+wire [ 9:0] id2exTLBBus;
+
+wire        MEM_to_IDU_forward_valid;
 
 wire        EXU_csr;
 wire        MEM_csr;
@@ -288,7 +389,14 @@ IDU u_IDU(
     .rf_raddr1          (rf_raddr1          ),
     .rf_raddr2          (rf_raddr2          ),
     .rf_rdata1          (rf_rdata1          ),
-    .rf_rdata2          (rf_rdata2          )
+    .rf_rdata2          (rf_rdata2          ),
+    // TLBBus
+    .id2exTLBBus        (id2exTLBBus        ),
+    // refetch signal
+    .if2idRefetch       (if2idRefetch       ),
+    .id2exRefetch       (id2exRefetch       ),
+    .id2exChangeTLB     (id2exChangeTLB     ),
+    .id2exChangeTLBEHI  (id2exChangeTLBEHI  )
 );
 
 wire        memAllowin;
@@ -300,6 +408,8 @@ wire [31:0] ex2memResult;
 wire        memStopMemAccess;
 wire [`CSRBUSL] ex2memCsrBus;
 wire [`EXPASSBUSL] ex2memPassBus;
+wire [ 9:0] ex2memTLBBus;
+
 EXU u_EXU(
     .clk                    (aclk                ),
     .reset                  (reset              ),
@@ -319,6 +429,7 @@ EXU u_EXU(
     .id2exALUBus            (id2exALUBus        ),
     .id2exPassBus           (id2exPassBus       ),
     .id2exDivBus            (id2exDivBus        ),
+    .id2exTLBBus            (id2exTLBBus        ),
     // from MEM
     .memStopMemAccess       (memStopMemAccess   ),
     // to MEM
@@ -327,6 +438,7 @@ EXU u_EXU(
     .ex2memInst             (ex2memInst         ),
     .ex2memResult           (ex2memResult       ),
     .ex2memPassBus          (ex2memPassBus      ),
+    .ex2memTLBBus           (ex2memTLBBus       ),
     // to IDU
     .EXU_to_IDU_csr         (EXU_csr            ),
     .EXU_to_IDU_gr_we       (EXU_to_IDU_gr_we   ),
@@ -341,7 +453,33 @@ EXU u_EXU(
     .data_sram_wstrb        (data_sram_wstrb    ),
     .data_sram_addr         (data_sram_addr     ), 
     .data_sram_wdata        (data_sram_wdata    ),
-    .data_sram_addr_ok      (data_sram_addr_ok  )
+    .data_sram_addr_ok      (data_sram_addr_ok  ),
+    // TLB search interface (for Load/Store/tlbsrch instructions)
+    .s1_vppn                (s1_vppn            ),
+    .s1_va_bit12            (s1_va_bit12        ),
+    .s1_asid                (s1_asid            ),
+    .s1_found               (s1_found           ),
+    .s1_index               (s1_index           ),
+    .s1_ppn                 (s1_ppn             ),
+    .s1_ps                  (s1_ps              ),
+    .s1_plv                 (s1_plv             ),
+    .s1_mat                 (s1_mat             ),
+    .s1_d                   (s1_d               ),
+    .s1_v                   (s1_v               ),
+    // for invtlb instruction(to TLB)
+    .invtlb_valid           (invtlb_valid       ),
+    .invtlb_op              (invtlb_op          ),
+    // for tlbsrch use(from csr)
+    .csr_tlbehi_vppn        (tlb_w_vppn         ),
+    .csr_asid               (tlb_w_asid         ),
+    // refetch signal
+    .tlb_stall              (tlb_stall          ),
+    .id2exRefetch           (id2exRefetch       ),
+    .id2exChangeTLB         (id2exChangeTLB     ),
+    .id2exChangeTLBEHI      (id2exChangeTLBEHI  ),
+    .ex2memRefetch          (ex2memRefetch      ),
+    .ex2memChangeTLB        (ex2memChangeTLB    ),
+    .ex2memChangeTLBEHI     (ex2memChangeTLBEHI )
 );
 
 wire        wbAllowin;
@@ -352,6 +490,8 @@ wire [31:0] mem2wbResult;
 wire [31:0] mem2wbMemvaddr;
 wire [`CSRBUSL] mem2wbCsrBus;
 wire [`MEMPASSBUSL] mem2wbPassBus;
+wire [ 9:0] mem2wbTLBBus;
+
 MEMU u_MEMU(
     .clk                    (aclk                ),
     .reset                  (reset              ),
@@ -369,6 +509,7 @@ MEMU u_MEMU(
     .ex2memInst             (ex2memInst         ), 
     .ex2memResult           (ex2memResult       ),
     .ex2memPassBus          (ex2memPassBus      ),
+    .ex2memTLBBus           (ex2memTLBBus       ),
     // to EXU
     .memStopMemAccess       (memStopMemAccess   ),
     // data sram interface
@@ -387,7 +528,15 @@ MEMU u_MEMU(
     .mem2wbInst             (mem2wbInst         ),
     .mem2wbResult           (mem2wbResult       ),
     .mem2wbPassBus          (mem2wbPassBus      ),
-    .mem2wbCsrBus           (mem2wbCsrBus       )
+    .mem2wbCsrBus           (mem2wbCsrBus       ),
+    .mem2wbTLBBus           (mem2wbTLBBus       ),
+    // refetch and change TLB signals
+    .ex2memRefetch          (ex2memRefetch      ),
+    .ex2memChangeTLB        (ex2memChangeTLB    ),
+    .ex2memChangeTLBEHI     (ex2memChangeTLBEHI ),
+    .mem2wbRefetch          (mem2wbRefetch      ),
+    .mem2wbChangeTLB        (mem2wbChangeTLB    ),
+    .mem2wbChangeTLBEHI     (mem2wbChangeTLBEHI )
 );
 
 wire [ 4:0] rf_waddr;
@@ -408,6 +557,7 @@ WBU u_WBU(
     .mem2wbResult       (mem2wbResult       ),
     .mem2wbPassBus      (mem2wbPassBus      ),
     .mem2wbCsrBus       (mem2wbCsrBus       ),
+    .mem2wbTLBBus       (mem2wbTLBBus       ),
     // to IDU
     .WB_to_IDU_csr      (WB_csr             ),
     .WB_to_IDU_gr_we    (WB_to_IDU_gr_we    ),
@@ -435,7 +585,24 @@ WBU u_WBU(
     .wb_ex              (wb_ex              ),
     .wb_ecode           (wb_ecode           ),
     .wb_esubcode        (wb_esubcode        ),
-    .wb_vaddr           (wb_vaddr           )
+    .wb_vaddr           (wb_vaddr           ),
+    // TLB and CSR read/write control signals
+    // to TLB
+    .tlbwe              (tlb_we             ),
+    .tlbfill            (tlbfill            ),
+    .tlbfill_randidx    (tlbfill_randidx    ),
+    // to CSR
+    .tlbsrch            (tlbsrch            ),
+    .tlbrd              (tlbrd              ),
+    .tlbsrch_found      (tlbsrch_found      ),
+    .tlbsrch_index      (tlbsrch_index      ),
+    // refetch signal
+    .mem2wbRefetch      (mem2wbRefetch      ),
+    .mem2wbChangeTLB    (mem2wbChangeTLB    ),
+    .mem2wbChangeTLBEHI (mem2wbChangeTLBEHI ),
+    .wbRefetch          (wbRefetch          ),
+    .wbChangeTLB        (wbChangeTLB        ),
+    .wbChangeTLBEHI     (wbChangeTLBEHI     )
 );
 
 regfile u_regfile(
@@ -469,7 +636,119 @@ csr_regs u_csr_regs(
     .coreid_in      (coreid_in      ),
     .isintr         (isintr         ),
     .hw_int_in      (hw_int_in      ),
-    .ipi_int_in     (ipi_int_in     )
+    .ipi_int_in     (ipi_int_in     ),
+    // tlbsrch & tlbrd write CSR
+    // from WB
+    .tlbsrch_found  (tlbsrch_found  ),
+    .tlbsrch_index  (tlbsrch_index  ),
+    .is_tlbrd       (tlbrd          ),
+    .is_tlbsrch     (tlbsrch        ),
+    // from TLB read port
+    .r_e            (tlb_r_e        ),
+    .r_vppn         (tlb_r_vppn     ),
+    .r_ps           (tlb_r_ps       ),
+    .r_asid         (tlb_r_asid     ),
+    .r_g            (tlb_r_g        ),
+    .r_ppn0         (tlb_r_ppn0     ),
+    .r_plv0         (tlb_r_plv0     ),
+    .r_mat0         (tlb_r_mat0     ),
+    .r_d0           (tlb_r_d0       ),
+    .r_v0           (tlb_r_v0       ),
+    .r_ppn1         (tlb_r_ppn1     ),
+    .r_plv1         (tlb_r_plv1     ),
+    .r_mat1         (tlb_r_mat1     ),
+    .r_d1           (tlb_r_d1       ),
+    .r_v1           (tlb_r_v1       ),
+    // tlbwr & tlbfill read CSR
+    // to TLB write port
+    .w_e            (tlb_w_e        ),
+    .w_vppn         (tlb_w_vppn     ),
+    .w_ps           (tlb_w_ps       ),
+    .w_asid         (tlb_w_asid     ),
+    .w_g            (tlb_w_g        ),
+    .w_ppn0         (tlb_w_ppn0     ),
+    .w_plv0         (tlb_w_plv0     ),
+    .w_mat0         (tlb_w_mat0     ),
+    .w_d0           (tlb_w_d0       ),
+    .w_v0           (tlb_w_v0       ),
+    .w_ppn1         (tlb_w_ppn1     ),
+    .w_plv1         (tlb_w_plv1     ),
+    .w_mat1         (tlb_w_mat1     ),
+    .w_d1           (tlb_w_d1       ),
+    .w_v1           (tlb_w_v1       ),
+    // use for TLB read/write
+    .tlb_index      (tlb_r_index    )
+);
+
+// TLB instantiation
+assign tlb_w_index = tlbfill ? tlbfill_randidx : tlb_r_index;
+
+tlb #(
+    .TLBNUM(16)
+) u_tlb (
+    .clk            (aclk           ),
+    // search port 0 (for fetch)
+    .s0_vppn        (s0_vppn        ),
+    .s0_va_bit12    (s0_va_bit12    ),
+    .s0_asid        (s0_asid        ),
+    .s0_found       (s0_found       ),
+    .s0_index       (s0_index       ),
+    .s0_ppn         (s0_ppn         ),
+    .s0_ps          (s0_ps          ),
+    .s0_plv         (s0_plv         ),
+    .s0_mat         (s0_mat         ),
+    .s0_d           (s0_d           ),
+    .s0_v           (s0_v           ),
+    // search port 1 (for load/store)
+    .s1_vppn        (s1_vppn        ),
+    .s1_va_bit12    (s1_va_bit12    ),
+    .s1_asid        (s1_asid        ),
+    .s1_found       (s1_found       ),
+    .s1_index       (s1_index       ),
+    .s1_ppn         (s1_ppn         ),
+    .s1_ps          (s1_ps          ),
+    .s1_plv         (s1_plv         ),
+    .s1_mat         (s1_mat         ),
+    .s1_d           (s1_d           ),
+    .s1_v           (s1_v           ),
+    // invtlb opcode
+    .invtlb_valid   (invtlb_valid   ),
+    .invtlb_op      (invtlb_op      ),
+    // write port
+    .we             (tlb_we         ),
+    .w_index        (tlb_w_index    ),
+    .w_e            (tlb_w_e        ),
+    .w_vppn         (tlb_w_vppn     ),
+    .w_ps           (tlb_w_ps       ),
+    .w_asid         (tlb_w_asid     ),
+    .w_g            (tlb_w_g        ),
+    .w_ppn0         (tlb_w_ppn0     ),
+    .w_plv0         (tlb_w_plv0     ),
+    .w_mat0         (tlb_w_mat0     ),
+    .w_d0           (tlb_w_d0       ),
+    .w_v0           (tlb_w_v0       ),
+    .w_ppn1         (tlb_w_ppn1     ),
+    .w_plv1         (tlb_w_plv1     ),
+    .w_mat1         (tlb_w_mat1     ),
+    .w_d1           (tlb_w_d1       ),
+    .w_v1           (tlb_w_v1       ),
+    // read port
+    .r_index        (tlb_r_index    ),
+    .r_e            (tlb_r_e        ),
+    .r_vppn         (tlb_r_vppn     ),
+    .r_ps           (tlb_r_ps       ),
+    .r_asid         (tlb_r_asid     ),
+    .r_g            (tlb_r_g        ),
+    .r_ppn0         (tlb_r_ppn0     ),
+    .r_plv0         (tlb_r_plv0     ),
+    .r_mat0         (tlb_r_mat0     ),
+    .r_d0           (tlb_r_d0       ),
+    .r_v0           (tlb_r_v0       ),
+    .r_ppn1         (tlb_r_ppn1     ),
+    .r_plv1         (tlb_r_plv1     ),
+    .r_mat1         (tlb_r_mat1     ),
+    .r_d1           (tlb_r_d1       ),
+    .r_v1           (tlb_r_v1       )
 );
 
 endmodule
