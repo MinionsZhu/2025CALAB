@@ -40,7 +40,7 @@ module IFU(
     // refetch signal
     input  wire        changeTLB_stall,
     input  wire        wb_refetch,
-    input  wire        wb_pc,
+    input  wire [31:0] wb_pc,
     output wire        if2idRefetch
 );
     // preif stage
@@ -77,7 +77,7 @@ module IFU(
         .data_out(nextpc_out)
     );
 
-    assign pcValidin = wb_ex || ertn_flush || br_taken_cancel;    // nextpc redirect condition
+    assign pcValidin = wb_ex || ertn_flush || br_taken_cancel || wb_refetch;    // nextpc redirect condition
     assign nextpc_in = (wb_ex)    ? ex_entry
                       : wb_refetch ? wb_pc
                       : ertn_flush  ? ertn_pc
@@ -122,7 +122,7 @@ module IFU(
         else if (ifAllowin) begin
             ifValidReg <= preifValidout;
         end
-        else if(br_taken_cancel | wb_ex | ertn_flush) begin  // except and ertn flush
+        else if(br_taken_cancel | wb_ex | ertn_flush | wb_refetch) begin  // except and ertn flush
             ifValidReg <= 1'b0;
         end
     end
@@ -153,13 +153,13 @@ module IFU(
         else if (inst_sram_data_ok) begin   // exp14 BUG: it should has higher priority than (br_taken_cancel | wb_ex | ertn_flush) && (!ifAllowin && !ifReadygo)
             instCancelReg <= 1'b0;
         end
-        else if ((br_taken_cancel | wb_ex | ertn_flush) && (!ifAllowin && !ifReadygo)) begin  // exp14 BUG: when preifValidout = 1, do not cancel
+        else if ((br_taken_cancel | wb_ex | ertn_flush | wb_refetch) && (!ifAllowin && !ifReadygo)) begin  // exp14 BUG: when preifValidout = 1, do not cancel
             instCancelReg <= 1'b1;
         end
     end
 
     assign ifValidout = ifValidReg && ifReadygo;    // exp14 BUG: do not write (ifValidReg || instValidout) && ifReadygo
-    assign ifReadygo = (inst_sram_data_ok || instValidout) && !instCancelReg && changeTLB_stall;
+    assign ifReadygo = (inst_sram_data_ok || instValidout) && !instCancelReg && !changeTLB_stall;
     assign ifAllowin = (!ifValidReg || (ifReadygo && idAllowin)) && !instCancelReg;
 
     assign seq_pc    = pc + 4;

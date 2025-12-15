@@ -413,14 +413,18 @@ assign newecode = exception ?  ecode:
 wire is_tlbsrch, is_tlbrd, is_tlbwr, is_tlbfill, is_invtlb;
 wire [4:0] invtlb_opcode;
 wire invuse_asid, invuse_vppn;
+wire tmp_s1_found;
+wire [3:0] tmp_s1_index;
 assign {is_tlbsrch, is_tlbrd, is_tlbwr, is_tlbfill, is_invtlb, invtlb_opcode} = tlb_signals_reg;
 assign invuse_asid = invtlb_opcode == 5'h4 || invtlb_opcode == 5'h5 || invtlb_opcode == 5'h6;
 assign invuse_vppn = invtlb_opcode == 5'h5 || invtlb_opcode == 5'h6;
 assign {s1_vppn, s1_va_bit12} = (is_tlbsrch) ? {csr_tlbehi_vppn, 1'b0} : (is_invtlb && invuse_vppn) ? rkd_value[31:12] : 20'b0;
 assign s1_asid = (is_tlbsrch) ? csr_asid : (is_invtlb && invuse_asid) ? rj_value[9:0] : 10'b0;
-assign invtlb_valid = exValidReg && is_invtlb && !wb_ex && !ertn_flush && !isale && !exception && !refetch;
+assign invtlb_valid = exValidReg && is_invtlb && !wb_ex && !ertn_flush && !isale && !exception;
 assign invtlb_op = invtlb_opcode;
-assign ex2memTLBBus = {is_tlbsrch, is_tlbrd, is_tlbwr, is_tlbfill, is_invtlb, invtlb_opcode, s1_found, s1_index};
+assign tmp_s1_found = (is_tlbsrch) ? s1_found : 1'b0;
+assign tmp_s1_index = (is_tlbsrch) ? s1_index : 4'b0;
+assign ex2memTLBBus = {is_tlbsrch, is_tlbrd, is_tlbwr, is_tlbfill, is_invtlb, tmp_s1_found, tmp_s1_index};
 
 // to IDU
 assign EXU_to_IDU_gr_we = gr_we;

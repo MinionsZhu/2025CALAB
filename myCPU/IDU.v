@@ -322,7 +322,8 @@ assign allinst =   (inst_rdcntvl_w | inst_rdcntvh_w | inst_rdcntid_w |
                     inst_csrrd  | inst_csrwr  | inst_csrxchg|
                     inst_ertn   | inst_tlbsrch | inst_tlbrd | inst_tlbwr  |
                     inst_tlbfill| inst_invtlb );
-assign ine = ~(allinst);    // if fetch address exception, then inst is invalid
+assign invtlb_ine = (inst_invtlb & invtlb_opcode > 5'h6);
+assign ine = ~(allinst) || invtlb_ine;    // if fetch address exception, then inst is invalid
 
 assign need_ui5   = inst_slli_w | inst_srli_w | inst_srai_w;
 assign need_si12  = inst_addi_w |
@@ -570,7 +571,7 @@ assign gr_we         = ~(inst_st_w | inst_st_h | inst_st_b |
                         inst_bltu | inst_bgeu | inst_b |
                         inst_ertn |
                         inst_break | inst_syscall |
-                        ine);  // inst exception doesn't write register
+                        inst_tlbsrch | inst_tlbrd | inst_tlbwr | inst_tlbfill | inst_invtlb);
 assign mem_we        = {inst_st_w, inst_st_h, inst_st_b};
 assign dest          = dst_is_r1 ? 5'd1 : 
                     inst_rdcntid_w ? rj : rd;    // special case for rdcntid.w
@@ -599,8 +600,8 @@ assign id2exTLBBus = {
 };
 assign id2exChangeTLB = (inst_tlbwr | inst_tlbfill | inst_tlbrd | inst_invtlb |
                         (csr_we & (csr_num == `CSR_CRMD 
-                        | csr_num == `CSR_DWM0 
-                        | csr_num == `CSR_DWM1
+                        //| csr_num == `CSR_DWM0 
+                        //| csr_num == `CSR_DWM1
                         | csr_num == `CSR_ASID
                         ))) & idValidReg;
 assign id2exChangeTLBEHI = (csr_we & (csr_num == `CSR_TLBEHI)) & idValidReg;

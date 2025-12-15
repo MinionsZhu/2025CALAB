@@ -261,7 +261,7 @@ wire        wbChangeTLBEHI;
 wire        changeTLB_stall;
 wire        tlb_stall;
 
-assign changeTLB_stall = id2exChangeTLB | ex2memChangeTLB | mem2wbChangeTLB | wbChangeTLB;
+assign changeTLB_stall = id2exChangeTLB | ex2memChangeTLB | mem2wbChangeTLB;
 assign tlb_stall = mem2wbChangeTLBEHI | wbChangeTLBEHI;
 
 IFU u_IFU(
@@ -339,10 +339,10 @@ wire        MEM_csr;
 wire        WB_csr;
 
 IDU u_IDU(
-    .clk                (aclk                ),
+    .clk                (aclk               ),
     .reset              (reset              ),
     // ie
-    .wb_ex              (wb_ex              ),
+    .wb_ex              (wb_ex | wbRefetch  ),
     .ertn_flush         (ertn_flush         ),
     .isintr             (isintr             ),
     // from IFU
@@ -414,7 +414,7 @@ EXU u_EXU(
     .clk                    (aclk                ),
     .reset                  (reset              ),
     // ie
-    .wb_ex                  (wb_ex              ),
+    .wb_ex                  (wb_ex | wbRefetch  ),
     .ertn_flush             (ertn_flush         ),
     // handshaking signals with IDU
     .idValidout             (idValidout         ),
@@ -495,7 +495,7 @@ wire [ 9:0] mem2wbTLBBus;
 MEMU u_MEMU(
     .clk                    (aclk                ),
     .reset                  (reset              ),
-    .wb_ex                  (wb_ex              ),
+    .wb_ex                  (wb_ex | wbRefetch  ),
     .ertn_flush             (ertn_flush         ),
     // handshaking signals with EXU
     .exValidout             (exValidout         ), 
