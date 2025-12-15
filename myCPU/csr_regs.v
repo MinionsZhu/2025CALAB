@@ -25,7 +25,7 @@ module csr_regs (
 
     output          isintr, // to IDU
     input   [ 7:0]  hw_int_in,
-    input           ipi_int_in
+    input           ipi_int_in,
 
     // tlbsrch & tlbrd write CSR
     // from WB
@@ -361,18 +361,18 @@ module csr_regs (
             csr_tlbelo0_g   <= (r_e) ? r_g : 1'b0;
         end
         else if(csr_we && (csr_num == `CSR_TLBELO0)) begin
-            csr_tlbelo0_ppn <=  csr_wmask[`CSR_TLBELO0_PPN]&csr_wvalue[`CSR_TLBELO0_PPN]
-                            | ~csr_wmask[`CSR_TLBELO0_PPN]&csr_tlbelo0_ppn;
-            csr_tlbelo0_plv <=  csr_wmask[`CSR_TLBELO0_PLV]&csr_wvalue[`CSR_TLBELO0_PLV]
-                            | ~csr_wmask[`CSR_TLBELO0_PLV]&csr_tlbelo0_plv;
-            csr_tlbelo0_mat <=  csr_wmask[`CSR_TLBELO0_MAT]&csr_wvalue[`CSR_TLBELO0_MAT]
-                            | ~csr_wmask[`CSR_TLBELO0_MAT]&csr_tlbelo0_mat;
-            csr_tlbelo0_d   <=  csr_wmask[`CSR_TLBELO0_D]&csr_wvalue[`CSR_TLBELO0_D]
-                            | ~csr_wmask[`CSR_TLBELO0_D]&csr_tlbelo0_d;
-            csr_tlbelo0_v   <=  csr_wmask[`CSR_TLBELO0_V]&csr_wvalue[`CSR_TLBELO0_V]
-                            | ~csr_wmask[`CSR_TLBELO0_V]&csr_tlbelo0_v;
-            csr_tlbelo0_g   <=  csr_wmask[`CSR_TLBELO0_G]&csr_wvalue[`CSR_TLBELO0_G]
-                            | ~csr_wmask[`CSR_TLBELO0_G]&csr_tlbelo0_g;
+            csr_tlbelo0_ppn <=  csr_wmask[`CSR_TLBELO_PPN]&csr_wvalue[`CSR_TLBELO_PPN]
+                            | ~csr_wmask[`CSR_TLBELO_PPN]&csr_tlbelo0_ppn;
+            csr_tlbelo0_plv <=  csr_wmask[`CSR_TLBELO_PLV]&csr_wvalue[`CSR_TLBELO_PLV]
+                            | ~csr_wmask[`CSR_TLBELO_PLV]&csr_tlbelo0_plv;
+            csr_tlbelo0_mat <=  csr_wmask[`CSR_TLBELO_MAT]&csr_wvalue[`CSR_TLBELO_MAT]
+                            | ~csr_wmask[`CSR_TLBELO_MAT]&csr_tlbelo0_mat;
+            csr_tlbelo0_d   <=  csr_wmask[`CSR_TLBELO_D]&csr_wvalue[`CSR_TLBELO_D]
+                            | ~csr_wmask[`CSR_TLBELO_D]&csr_tlbelo0_d;
+            csr_tlbelo0_v   <=  csr_wmask[`CSR_TLBELO_V]&csr_wvalue[`CSR_TLBELO_V]
+                            | ~csr_wmask[`CSR_TLBELO_V]&csr_tlbelo0_v;
+            csr_tlbelo0_g   <=  csr_wmask[`CSR_TLBELO_G]&csr_wvalue[`CSR_TLBELO_G]
+                            | ~csr_wmask[`CSR_TLBELO_G]&csr_tlbelo0_g;
         end
     end
     assign w_ppn0 = csr_tlbelo0_ppn;
@@ -399,18 +399,18 @@ module csr_regs (
             csr_tlbelo1_g   <= (r_e) ? r_g : 1'b0;
         end
         else if(csr_we && (csr_num == `CSR_TLBELO1)) begin
-            csr_tlbelo1_ppn <=  csr_wmask[`CSR_TLBELO1_PPN]&csr_wvalue[`CSR_TLBELO1_PPN]
-                            | ~csr_wmask[`CSR_TLBELO1_PPN]&csr_tlbelo1_ppn;
-            csr_tlbelo1_plv <=  csr_wmask[`CSR_TLBELO1_PLV]&csr_wvalue[`CSR_TLBELO1_PLV]
-                            | ~csr_wmask[`CSR_TLBELO1_PLV]&csr_tlbelo1_plv;
-            csr_tlbelo1_mat <=  csr_wmask[`CSR_TLBELO1_MAT]&csr_wvalue[`CSR_TLBELO1_MAT]
-                            | ~csr_wmask[`CSR_TLBELO1_MAT]&csr_tlbelo1_mat;
-            csr_tlbelo1_d   <=  csr_wmask[`CSR_TLBELO1_D]&csr_wvalue[`CSR_TLBELO1_D]
-                            | ~csr_wmask[`CSR_TLBELO1_D]&csr_tlbelo1_d;
-            csr_tlbelo1_v   <=  csr_wmask[`CSR_TLBELO1_V]&csr_wvalue[`CSR_TLBELO1_V]
-                            | ~csr_wmask[`CSR_TLBELO1_V]&csr_tlbelo1_v;
-            csr_tlbelo1_g   <=  csr_wmask[`CSR_TLBELO1_G]&csr_wvalue[`CSR_TLBELO1_G]
-                            | ~csr_wmask[`CSR_TLBELO1_G]&csr_tlbelo1_g;
+            csr_tlbelo1_ppn <=  csr_wmask[`CSR_TLBELO_PPN]&csr_wvalue[`CSR_TLBELO_PPN]
+                            | ~csr_wmask[`CSR_TLBELO_PPN]&csr_tlbelo1_ppn;
+            csr_tlbelo1_plv <=  csr_wmask[`CSR_TLBELO_PLV]&csr_wvalue[`CSR_TLBELO_PLV]
+                            | ~csr_wmask[`CSR_TLBELO_PLV]&csr_tlbelo1_plv;
+            csr_tlbelo1_mat <=  csr_wmask[`CSR_TLBELO_MAT]&csr_wvalue[`CSR_TLBELO_MAT]
+                            | ~csr_wmask[`CSR_TLBELO_MAT]&csr_tlbelo1_mat;
+            csr_tlbelo1_d   <=  csr_wmask[`CSR_TLBELO_D]&csr_wvalue[`CSR_TLBELO_D]
+                            | ~csr_wmask[`CSR_TLBELO_D]&csr_tlbelo1_d;
+            csr_tlbelo1_v   <=  csr_wmask[`CSR_TLBELO_V]&csr_wvalue[`CSR_TLBELO_V]
+                            | ~csr_wmask[`CSR_TLBELO_V]&csr_tlbelo1_v;
+            csr_tlbelo1_g   <=  csr_wmask[`CSR_TLBELO_G]&csr_wvalue[`CSR_TLBELO_G]
+                            | ~csr_wmask[`CSR_TLBELO_G]&csr_tlbelo1_g;
         end
     end
     assign w_g    = csr_tlbelo0_g & csr_tlbelo1_g;

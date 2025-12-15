@@ -80,7 +80,7 @@
 `define CSR_TLBELO_V 0:0
 `define CSR_TLBELO_D 1:1
 `define CSR_TLBELO_PLV 3:2
-`define CSR_TLBELO_PLV 5:4
+`define CSR_TLBELO_MAT 5:4
 `define CSR_TLBELO_G 6:6
 `define CSR_TLBELO_PPN 27:8
 

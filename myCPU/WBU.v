@@ -67,7 +67,7 @@ module WBU(
     input  wire        mem2wbChangeTLBEHI,
     output wire        wbRefetch,
     output wire        wbChangeTLB,
-    output wire        wbChangeTLBEHI,
+    output wire        wbChangeTLBEHI
 );
 
 reg [`CSRBUSL] csr_signals_reg;
