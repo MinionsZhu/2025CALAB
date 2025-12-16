@@ -78,7 +78,25 @@ module EXU(
     input  wire        id2exChangeTLBEHI,
     output wire        ex2memRefetch,
     output wire        ex2memChangeTLB,
-    output wire        ex2memChangeTLBEHI
+    output wire        ex2memChangeTLBEHI,
+
+    input  wire [1:0]  csr_crmd_plv,
+    input  wire        csr_crmd_da,
+    input  wire        csr_crmd_pg,
+    input  wire [1:0]  csr_crmd_datf,
+    input  wire [1:0]  csr_crmd_datm,
+
+    input  wire        csr_dmw0_plv0,
+    input  wire [1:0]  csr_dmw0_mat,
+    input  wire        csr_dmw0_plv3,
+    input  wire [2:0]  csr_dmw0_pseg,
+    input  wire [2:0]  csr_dmw0_vseg,
+    input  wire        csr_dmw1_plv0,
+    input  wire [1:0]  csr_dmw1_mat,
+    input  wire        csr_dmw1_plv3,
+    input  wire [2:0]  csr_dmw1_pseg,
+    input  wire [2:0]  csr_dmw1_vseg,
+    input  wire [9:0]  csr_asid_asid
 );
 reg         exValidReg;
 
@@ -161,6 +179,8 @@ wire [ 5:0] newecode;       // add ALE exception
 wire [14:0] syscall_code;
 
 wire        exErtnFlush;
+wire        ifTlbrPass;
+wire        ifPpiPass;
 
 wire [31:0] exResult;
 always @(posedge clk) begin
@@ -361,7 +381,7 @@ assign ex2memResult = exResult;
 assign ex2memPassBus = {is_sram_inst, res_from_mem, mem_offsets, gr_we, dest};
 assign mem_offsets = alu_result[1:0];
 
-assign {csr, csr_we, csr_num, csr_wmask, null32, exception, ecode, syscall_code, exErtnFlush} = csr_signals_reg;
+assign {csr, csr_we, csr_num, csr_wmask, null32, exception, ecode, syscall_code, exErtnFlush, ifTlbrPass, ifPpiPass} = csr_signals_reg;
 assign csr_wvalue = rkd_value;
 assign EXU_to_IDU_csr = csr;
 assign ex2memCsrBus = {csr,               // [0]
@@ -369,17 +389,60 @@ assign ex2memCsrBus = {csr,               // [0]
                         csr_num,           // [15:2], 14
                         csr_wmask,         // [47:16], 32
                         csr_wvalue,        // [79:48], 32
-                        exception | isale, // [80]
+                        exception | isale | tlbr_ex | pil_ex | pis_ex | pme_ex | ppi_ex, // [80]
                         newecode,          // [86:81], 6
                         syscall_code,      // [101:87], 15
-                        exErtnFlush        // [102]
+                        exErtnFlush,        // [102]
+                        ifTlbrPass,        // [103]
+                        ifPpiPass         // [104]
                         };
 
 /*******************************/
 /*     data sram interface     */
 /*******************************/
+wire dat;
+wire pat;
+wire dmw0_hit;
+wire dmw1_hit;
+wire [31:0] addr_ptt;
+wire [31:0] addr_dmw0;
+wire [31:0] addr_dmw1;
+wire [31:0] addr_phy;
+wire use_tlb;
+wire tlbr_ex;
+wire pil_ex;
+wire pis_ex;
+wire pme_ex;
+wire ppi_ex;
+wire addr_ex;
+
+assign dat = csr_crmd_da && !csr_crmd_pg;
+assign pat = csr_crmd_pg && !csr_crmd_da;
+assign addr_ptt = {s1_ppn, alu_result[11:0]};
+assign addr_dmw0 = {csr_dmw0_pseg, alu_result[28:0]};
+assign addr_dmw1 = {csr_dmw1_pseg, alu_result[28:0]};
+assign dmw0_hit = (csr_dmw0_plv0 && (csr_crmd_plv == 2'b0) || csr_dmw0_plv3 && (csr_crmd_plv == 2'b11)) &&
+                  (alu_result[31:29] == csr_dmw0_vseg) && (csr_crmd_datf == csr_dmw0_mat);
+assign dmw1_hit = (csr_dmw1_plv0 && (csr_crmd_plv == 2'b0) || csr_dmw1_plv3 && (csr_crmd_plv == 2'b11)) &&
+                  (alu_result[31:29] == csr_dmw1_vseg) && (csr_crmd_datf == csr_dmw1_mat);
+assign addr_phy = dat ? alu_result :
+                  pat? (dmw0_hit ? addr_dmw0 :
+                        dmw1_hit ? addr_dmw1 :
+                                   addr_ptt) :
+                  32'b0; // should not happen
+assign use_tlb = pat && !dmw0_hit && !dmw1_hit && is_sram_inst;
+assign tlbr_ex = use_tlb && !s1_found;
+assign pil_ex = use_tlb && (|res_from_mem) && s1_found && !s1_v;
+assign pis_ex = use_tlb && (|mem_we) && s1_found && !s1_v;
+assign pme_ex = use_tlb && s1_found && s1_v && !s1_d && (|mem_we) 
+             && (csr_crmd_plv == 2'b00 || (csr_crmd_plv == 2'b01 &&(s1_plv == 2'b01 || s1_plv == 2'b10 || s1_plv == 2'b11)) ||
+                (csr_crmd_plv == 2'b10 &&( s1_plv == 2'b10 || s1_plv == 2'b11)) ||
+                (csr_crmd_plv == 2'b11 &&(s1_plv == 2'b11)) );
+assign ppi_ex = use_tlb && s1_found && s1_v && (csr_crmd_plv > s1_plv);
+assign addr_ex = tlbr_ex || pil_ex || pis_ex || pme_ex || ppi_ex || newecode==`ECODE_PIF;
+
 assign is_sram_inst = (|res_from_mem || |mem_we) && exValidReg && !isale && !exception && !refetch;
-assign data_sram_req = is_sram_inst && memAllowin && !memStopMemAccess && !wb_ex && !ertn_flush;
+assign data_sram_req = is_sram_inst && memAllowin && !memStopMemAccess && !wb_ex && !ertn_flush && !addr_ex;
 assign data_sram_wr  = |mem_we;
 assign data_sram_wstrb = (~exValidReg || wb_ex || isale) ? 4'b0 :
                     mem_we[2] ? 4'b1111 :
@@ -395,9 +458,9 @@ assign is_sram_b = mem_we[0] || res_from_mem[2] || res_from_mem[0];
 assign data_sram_size = is_sram_w ? 2'b10 :
                         is_sram_h ? 2'b01 :
                         is_sram_b ? 2'b00 : 2'b10;
-assign data_sram_addr = is_sram_w ? { alu_result[31:2], 2'b00 } :
-                        is_sram_h ? { alu_result[31:1], 1'b0  } :
-                        is_sram_b ? { alu_result              }:  alu_result;
+assign data_sram_addr = is_sram_w ? { addr_phy[31:2], 2'b00 } :
+                        is_sram_h ? { addr_phy[31:1], 1'b0  } :
+                        is_sram_b ? { addr_phy[31:0]        } :  32'b0;
 assign data_sram_wdata = mem_we[2] ?    rkd_value :
                             mem_we[1] ? {2{rkd_value[15:0]}} :
                             mem_we[0] ? {4{rkd_value[ 7:0]}} : 32'b0;
@@ -406,8 +469,13 @@ assign data_sram_wdata = mem_we[2] ?    rkd_value :
 assign isale  = (~(alu_result[1:0] == 2'b0) & (mem_we[2] | res_from_mem[4]))|    // word-aligned check
                 (~(alu_result[0]   == 1'b0) & (mem_we[1] | res_from_mem[3] | res_from_mem[1]));    // half-word-aligned check
 assign newecode = exception ?  ecode:
-                    isale     ? `ECODE_ALE:
-                                `ECODE_INT;   // to keep priority of exceptions
+                  tlbr_ex   ? `ECODE_TLBR:
+                  pil_ex    ? `ECODE_PIL:
+                  pis_ex    ? `ECODE_PIS:
+                  pme_ex    ? `ECODE_PME:
+                  ppi_ex    ? `ECODE_PPI:
+                  isale     ? `ECODE_ALE:
+                              `ECODE_INT;   // to keep priority of exceptions
 
 // TLB search interface
 wire is_tlbsrch, is_tlbrd, is_tlbwr, is_tlbfill, is_invtlb;
@@ -418,8 +486,8 @@ wire [3:0] tmp_s1_index;
 assign {is_tlbsrch, is_tlbrd, is_tlbwr, is_tlbfill, is_invtlb, invtlb_opcode} = tlb_signals_reg;
 assign invuse_asid = invtlb_opcode == 5'h4 || invtlb_opcode == 5'h5 || invtlb_opcode == 5'h6;
 assign invuse_vppn = invtlb_opcode == 5'h5 || invtlb_opcode == 5'h6;
-assign {s1_vppn, s1_va_bit12} = (is_tlbsrch) ? {csr_tlbehi_vppn, 1'b0} : (is_invtlb && invuse_vppn) ? rkd_value[31:12] : 20'b0;
-assign s1_asid = (is_tlbsrch) ? csr_asid : (is_invtlb && invuse_asid) ? rj_value[9:0] : 10'b0;
+assign {s1_vppn, s1_va_bit12} = (is_tlbsrch) ? {csr_tlbehi_vppn, 1'b0} : (is_invtlb && invuse_vppn) ? rkd_value[31:12] : (is_sram_inst) ? alu_result[31:12]: 20'b0;
+assign s1_asid = (is_tlbsrch) ? csr_asid : (is_invtlb && invuse_asid) ? rj_value[9:0] : (is_sram_inst) ? csr_asid_asid : 10'b0;
 assign invtlb_valid = exValidReg && is_invtlb && !wb_ex && !ertn_flush && !isale && !exception;
 assign invtlb_op = invtlb_opcode;
 assign tmp_s1_found = (is_tlbsrch) ? s1_found : 1'b0;
@@ -446,7 +514,7 @@ always @(posedge clk) begin
     end
 end
 assign exReadygo  =  use_div        ? (signed_div_dout_valid | unsigned_div_dout_valid) :
-                     is_sram_inst   ? (data_sram_addr_ok && data_sram_req) : 
+                     is_sram_inst   ? (data_sram_addr_ok && data_sram_req || exception || addr_ex) : 
                      tlb_stall      ? 1'b0 : 1'b1;
 assign exValidout =  exValidReg &&  exReadygo;
 assign exAllowin  = !exValidReg || (exReadygo && memAllowin);

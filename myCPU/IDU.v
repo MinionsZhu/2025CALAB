@@ -13,6 +13,9 @@ module IDU(
     input  wire [31:0] if2idPC,
     input  wire [31:0] if2idInst,
     input  wire        isadef,
+    input  wire        if_tlbr_ex,
+    input  wire        if_pif_ex,
+    input  wire        if_ppi_ex,
 
     // to IFU
     output wire        br_taken,
@@ -410,6 +413,8 @@ wire        exception;
 wire [ 5:0] ecode;
 wire [14:0] syscall_code;
 wire        idErtnFlush;
+wire        ifTlbrPass;
+wire        ifPpiPass;
 wire        csr_raw;
 reg  [ 6:0] preciseExcptReg;    // to keep precise exception info
 assign csr          = inst_csrrd | inst_csrwr | inst_csrxchg | inst_rdcntid_w;  // consider rdcntid as csr instruction, for it needs to read tid.csr
@@ -434,7 +439,9 @@ assign id2exCsrBus = {
     exception,      // [80]
     ecode,          // [86:81]
     syscall_code,   // [101:87]
-    idErtnFlush     // [102]
+    idErtnFlush,     // [102]
+    ifTlbrPass,
+    ifPpiPass
 };
 assign {excptstore, ecodestore} = preciseExcptReg;
 always @(posedge clk) begin
@@ -442,11 +449,28 @@ always @(posedge clk) begin
         preciseExcptReg <= 7'b0;    // to keep precise exception info
     end
     else if(idAllowin & ifValidout) begin   // for it is from if, it should be controled by idAllowin & ifValidout
-        preciseExcptReg <= {isintr | isadef | if2idRefetch,
+        preciseExcptReg <= {isintr | isadef | if2idRefetch | if_tlbr_ex | if_pif_ex | if_ppi_ex,
                             isintr ? `ECODE_INT :
-                            isadef ? `ECODE_ADE : `ECODE_ADE};   // to keep precise exception info
+                            isadef ? `ECODE_ADE :
+                            if_tlbr_ex ? `ECODE_TLBR :
+                            if_pif_ex  ? `ECODE_PIF  :
+                            if_ppi_ex  ? `ECODE_PPI  :
+                            `ECODE_ADE};   // to keep precise exception info
     end
 end
+reg if_tlbr_ex_reg, if_ppi_ex_reg;
+always @(posedge clk ) begin
+    if(reset) begin
+        if_ppi_ex_reg <= 0;
+        if_tlbr_ex_reg <= 0;
+    end
+    else if (idAllowin & ifValidout) begin
+        if_ppi_ex_reg <= if_ppi_ex;
+        if_tlbr_ex_reg <= if_tlbr_ex;
+    end
+end
+assign ifTlbrPass = if_tlbr_ex_reg;
+assign ifPpiPass  = if_ppi_ex_reg;
 assign csr_raw = EXU_csr && (rf1_raw_exu || rf2_raw_exu) 
             || MEM_csr && (rf1_raw_mem || rf2_raw_mem) 
             || WB_csr  && (rf1_raw_wb  || rf2_raw_wb);
@@ -600,8 +624,8 @@ assign id2exTLBBus = {
 };
 assign id2exChangeTLB = (inst_tlbwr | inst_tlbfill | inst_tlbrd | inst_invtlb |
                         (csr_we & (csr_num == `CSR_CRMD 
-                        //| csr_num == `CSR_DWM0 
-                        //| csr_num == `CSR_DWM1
+                        | csr_num == `CSR_DMW0 
+                        | csr_num == `CSR_DMW1
                         | csr_num == `CSR_ASID
                         ))) & idValidReg;
 assign id2exChangeTLBEHI = (csr_we & (csr_num == `CSR_TLBEHI)) & idValidReg;

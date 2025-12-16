@@ -32,6 +32,9 @@ module IFU(
     output wire [31:0] if2idInst,
     output wire [31:0] if2idPC,
     output wire        isadef,      // ADEF exception, attached to inst
+    output wire        if_tlbr_ex, // TLB refill exception, attached to inst
+    output wire        if_pif_ex,  // PIF exception, attached to inst
+    output wire        if_ppi_ex,  // PPI exception, attached to inst
 
     // handshaking signals with IDU
     input  wire        idAllowin,
@@ -41,11 +44,41 @@ module IFU(
     input  wire        changeTLB_stall,
     input  wire        wb_refetch,
     input  wire [31:0] wb_pc,
-    output wire        if2idRefetch
+    output wire        if2idRefetch,
+
+    input  wire [9:0]  csr_asid_asid,
+    output wire [18:0] s0_vppn,
+    output wire        s0_va_bit12,
+    output wire [ 9:0] s0_asid,
+    input  wire        s0_found,
+    input  wire [19:0] s0_ppn,
+    input  wire [ 1:0] s0_plv,
+    input  wire        s0_v,
+
+    input  wire [1:0]  csr_crmd_plv,
+    input  wire        csr_crmd_da,
+    input  wire        csr_crmd_pg,
+    input  wire [1:0]  csr_crmd_datf,
+    input  wire [1:0]  csr_crmd_datm,
+
+    input  wire        csr_dmw0_plv0,
+    input  wire [1:0]  csr_dmw0_mat,
+    input  wire        csr_dmw0_plv3,
+    input  wire [2:0]  csr_dmw0_pseg,
+    input  wire [2:0]  csr_dmw0_vseg,
+    input  wire        csr_dmw1_plv0,
+    input  wire [1:0]  csr_dmw1_mat,
+    input  wire        csr_dmw1_plv3,
+    input  wire [2:0]  csr_dmw1_pseg,
+    input  wire [2:0]  csr_dmw1_vseg,
+
+    input  wire [31:0] csr_tlbrentry,
+    input  wire        tlbr_ex 
 );
     // preif stage
     reg         preifValidReg;
     wire [31:0] nextpc;
+    wire [31:0] nextpc_p; // for inst_sram_addr, physical address
     wire        preifValidout;
     wire        preifReadygo;
     wire        pcValidin;
@@ -78,7 +111,8 @@ module IFU(
     );
 
     assign pcValidin = wb_ex || ertn_flush || br_taken_cancel || wb_refetch;    // nextpc redirect condition
-    assign nextpc_in = (wb_ex)    ? ex_entry
+    assign nextpc_in = (wb_ex && !tlbr_ex) ? ex_entry
+                      :(wb_ex &&  tlbr_ex) ? csr_tlbrentry
                       : wb_refetch ? wb_pc
                       : ertn_flush  ? ertn_pc
                       : br_taken    ? br_target
@@ -106,9 +140,43 @@ module IFU(
         end
     end
 
+    wire dat;
+    wire pat;
+    assign dat = csr_crmd_da && !csr_crmd_pg;
+    assign pat = csr_crmd_pg && !csr_crmd_da;
+
+    assign s0_vppn     = nextpc[31:13];
+    assign s0_va_bit12 = nextpc[12];
+    assign s0_asid     = csr_asid_asid;
+
+    wire [31:0] nextpc_ptt;
+    assign nextpc_ptt = {s0_ppn, nextpc[11:0]};
+
+    wire dmw0_hit;
+    wire dmw1_hit;
+    assign dmw0_hit = ((csr_crmd_plv == 0 && csr_dmw0_plv0) || (csr_crmd_plv == 3 && csr_dmw0_plv3)) &&
+                      (nextpc[31:29] == csr_dmw0_vseg) && (csr_crmd_datf == csr_dmw0_mat);
+    assign dmw1_hit = ((csr_crmd_plv == 0 && csr_dmw1_plv0) || (csr_crmd_plv == 3 && csr_dmw1_plv3)) &&
+                      (nextpc[31:29] == csr_dmw1_vseg) && (csr_crmd_datf == csr_dmw1_mat);
+    wire [31:0] nextpc_dmw0;
+    assign nextpc_dmw0 = {csr_dmw0_pseg, nextpc[28:0]};
+
+    wire [31:0] nextpc_dmw1; //DMW1
+    assign nextpc_dmw1 = {csr_dmw1_pseg, nextpc[28:0]};
+    // nextpc physical address calculation
+
     assign nextpc = pcValidout ? nextpc_out : seq_pc;
+    assign nextpc_p = dat ? nextpc :
+                      pat ? (dmw0_hit ? nextpc_dmw0 : (dmw1_hit ? nextpc_dmw1 : nextpc_ptt))
+                     : 0;
+    wire preif_tlbr_ex, preif_pif_ex, preif_ppi_ex;
+    assign preif_tlbr_ex = pat && !dmw0_hit && !dmw1_hit && !s0_found;
+    assign preif_pif_ex  = pat && !dmw0_hit && !dmw1_hit && s0_found && !s0_v;
+    assign preif_ppi_ex  = pat && !dmw0_hit && !dmw1_hit && s0_found && s0_v && (csr_crmd_plv > s0_plv);
+    wire preif_addr_ex;
+    assign preif_addr_ex = preif_tlbr_ex || preif_pif_ex || preif_ppi_ex;
     assign preifValidout = preifValidReg && preifReadygo;
-    assign preifReadygo = inst_sram_req && inst_sram_addr_ok;
+    assign preifReadygo = inst_sram_req && inst_sram_addr_ok && !preif_addr_ex || preif_addr_ex;
     assign preifAllowin = (!preifValidReg || (preifReadygo && ifAllowin)) && !br_stall && !reset;
 
     /*******************************/
@@ -158,8 +226,30 @@ module IFU(
         end
     end
 
+    reg tlbr_ex_reg;
+    reg pif_ex_reg;
+    reg ppi_ex_reg;
+    always @(posedge clk) begin
+        if (reset) begin
+            tlbr_ex_reg <= 1'b0;
+            pif_ex_reg  <= 1'b0;
+            ppi_ex_reg  <= 1'b0;
+        end
+        else if (ifAllowin) begin
+            tlbr_ex_reg <= preif_tlbr_ex;
+            pif_ex_reg  <= preif_pif_ex;
+            ppi_ex_reg  <= preif_ppi_ex;
+        end
+        else if(br_taken_cancel | wb_ex | ertn_flush | wb_refetch) begin  // except and ertn flush
+            tlbr_ex_reg <= 1'b0;
+            pif_ex_reg  <= 1'b0;
+            ppi_ex_reg  <= 1'b0;
+        end
+    end
+    wire if_addr_ex;
+    assign if_addr_ex = tlbr_ex_reg || pif_ex_reg || ppi_ex_reg;
     assign ifValidout = ifValidReg && ifReadygo;    // exp14 BUG: do not write (ifValidReg || instValidout) && ifReadygo
-    assign ifReadygo = (inst_sram_data_ok || instValidout) && !instCancelReg && !changeTLB_stall;
+    assign ifReadygo = (inst_sram_data_ok || instValidout || if_addr_ex) && !instCancelReg && !changeTLB_stall;
     assign ifAllowin = (!ifValidReg || (ifReadygo && idAllowin)) && !instCancelReg;
 
     assign seq_pc    = pc + 4;
@@ -168,11 +258,11 @@ module IFU(
     /*******************************/
     /*     inst sram interface     */
     /*******************************/
-    assign inst_sram_req    = preifValidReg && ifAllowin;
+    assign inst_sram_req    = preifValidReg && ifAllowin && !preif_addr_ex;
     assign inst_sram_wr     = 1'b0;
     assign inst_sram_size   = 2'b10;
     assign inst_sram_wstrb  = 4'b0000;
-    assign inst_sram_addr   = { nextpc[31:2], 2'b00 };
+    assign inst_sram_addr   = { nextpc_p[31:2], 2'b00 };
     assign inst_sram_wdata  = 32'b0;
 
     /*******************************/
@@ -188,6 +278,9 @@ module IFU(
     end
     assign isadef = regAdef; // csr_signal_reg for IF stage
     assign if2idRefetch = refetch;
+    assign if_tlbr_ex = tlbr_ex_reg;
+    assign if_pif_ex  = pif_ex_reg;
+    assign if_ppi_ex  = ppi_ex_reg;
 
 endmodule
 

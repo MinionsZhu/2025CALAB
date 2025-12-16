@@ -24,6 +24,8 @@
 `define CSR_TVAL 14'h42
 `define CSR_TICLR 14'h44
 `define CSR_TLBRENTRY 14'h88
+`define CSR_DMW0 14'h180
+`define CSR_DMW1 14'h181
 
 // BITS in CRMD
 `define CSR_CRMD_PLV 1:0
@@ -31,7 +33,7 @@
 `define CSR_CRMD_DA 3:3
 `define CSR_CRMD_PG 4:4
 `define CSR_CRMD_DATF 6:5
-`define CSR_CRMD_PGF 8:7
+`define CSR_CRMD_DATM 8:7
 
 // BITS in PRMD
 `define CSR_PRMD_PPLV 1:0
@@ -90,4 +92,13 @@
 // BITS in TLBRENTRY
 `define CSR_TLBRENTRY_PA 31:6
 
+// BITS in DMW0 & DMW1
+`define CSR_DMW_PLV0        0:0
+`define CSR_DMW_ZERO1       2:1
+`define CSR_DMW_PLV3        3:3
+`define CSR_DMW_MAT         5:4
+`define CSR_DMW_ZERO2       24:6
+`define CSR_DMW_PSEG        27:25
+`define CSR_DMW_ZERO3       28:28
+`define CSR_DMW_VSEG        31:29
 `endif // CSR_VH

@@ -1,4 +1,5 @@
 `include "busdef.vh"
+`include "ecodes.vh"
 module WBU(
     input  wire        clk,
     input  wire        reset,
@@ -67,7 +68,11 @@ module WBU(
     input  wire        mem2wbChangeTLBEHI,
     output wire        wbRefetch,
     output wire        wbChangeTLB,
-    output wire        wbChangeTLBEHI
+    output wire        wbChangeTLBEHI,
+
+    output wire        tlbr_ex,
+    output wire        if_tlb_refill,
+    output wire        if_plv_ex
 );
 
 reg [`CSRBUSL] csr_signals_reg;
@@ -99,6 +104,8 @@ wire        WBU_exception;
 wire [ 5:0] WBU_ecode;
 wire [14:0] WBU_syscall_code;   // it is useless in design
 wire        WBU_ertn_flush;
+wire        WBU_ifTlbrPass;
+wire        WBU_ifPpiPass;
 
 always @(posedge clk) begin
     if (reset) begin
@@ -209,7 +216,7 @@ always @(posedge clk ) begin
 end
 
 // csr signals
-assign {WBU_csr, WBU_csr_we, WBU_csr_num, WBU_csr_wmask, WBU_csr_wvalue, WBU_exception, WBU_ecode, WBU_syscall_code, WBU_ertn_flush} = csr_signals_reg;
+assign {WBU_csr, WBU_csr_we, WBU_csr_num, WBU_csr_wmask, WBU_csr_wvalue, WBU_exception, WBU_ecode, WBU_syscall_code, WBU_ertn_flush, WBU_ifTlbrPass, WBU_ifPpiPass} = csr_signals_reg;
 assign csr_re = 1'b1;
 assign csr_we = WBU_csr_we & ~refetch & wbValidReg;
 assign csr_num = WBU_csr_num;
@@ -243,6 +250,10 @@ always @(posedge clk) begin
     end
 end
 assign tlbfill_randidx = tlbfill_randidx_reg;
+
+assign tlbr_ex = wb_ex && (wb_ecode == `ECODE_TLBR);
+assign if_tlb_refill = wb_ex && (wb_ecode == `ECODE_TLBR) && WBU_ifTlbrPass;
+assign if_plv_ex = wb_ex && (wb_ecode == `ECODE_PIL) && WBU_ifPpiPass;
 
 // handshaking signals
 assign wbReadygo      = 1'b1;

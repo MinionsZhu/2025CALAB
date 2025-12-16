@@ -141,6 +141,9 @@ wire        ifValidout;
 wire [31:0] if2idInst;
 wire [31:0] if2idPC;
 wire        isadef;
+wire        if_tlbr_ex;
+wire        if_pif_ex;
+wire        if_ppi_ex;
 wire        br_taken_cancel;
 wire        br_taken;
 wire [31:0] br_target;
@@ -261,6 +264,28 @@ wire        wbChangeTLBEHI;
 wire        changeTLB_stall;
 wire        tlb_stall;
 
+wire        tlbr_ex;
+wire        if_tlb_refill;
+wire        if_plv_ex;
+wire [ 1:0] crmd_plv;
+wire        crmd_da;
+wire        crmd_pg;
+wire [ 1:0] crmd_datf;
+wire [ 1:0] crmd_datm;
+wire        dmw0_plv0;
+wire        dmw0_plv3;
+wire [ 1:0] dmw0_mat;
+wire [ 2:0] dmw0_pseg;
+wire [ 2:0] dmw0_vseg;
+wire        dmw1_plv0;
+wire        dmw1_plv3;
+wire [ 1:0] dmw1_mat;
+wire [ 2:0] dmw1_pseg;
+wire [ 2:0] dmw1_vseg;
+wire [ 9:0] csr_asid_asid;
+wire [ 5:0] stat_ecode;
+wire [31:0] ex_tlbrentry;
+
 assign changeTLB_stall = id2exChangeTLB | ex2memChangeTLB | mem2wbChangeTLB;
 assign tlb_stall = mem2wbChangeTLBEHI | wbChangeTLBEHI;
 
@@ -292,6 +317,9 @@ IFU u_IFU(
     .if2idInst          (if2idInst      ),
     .if2idPC            (if2idPC        ),
     .isadef             (isadef         ),
+    .if_tlbr_ex         (if_tlbr_ex     ),
+    .if_pif_ex          (if_pif_ex      ),
+    .if_ppi_ex          (if_ppi_ex      ),
     // handshaking signals with IDU
     .idAllowin          (idAllowin      ),
     .ifValidout         (ifValidout     ),
@@ -299,7 +327,32 @@ IFU u_IFU(
     .changeTLB_stall    (changeTLB_stall),
     .wb_refetch         (wbRefetch      ),
     .wb_pc              (wb_pc          ),
-    .if2idRefetch       (if2idRefetch   )
+    .if2idRefetch       (if2idRefetch   ),
+    .csr_asid_asid      (csr_asid_asid  ),
+    .s0_vppn        (s0_vppn        ),
+    .s0_va_bit12    (s0_va_bit12    ),
+    .s0_asid        (s0_asid        ),
+    .s0_found       (s0_found       ),
+    .s0_ppn         (s0_ppn         ),
+    .s0_plv         (s0_plv         ),
+    .s0_v           (s0_v           ),
+    .csr_crmd_plv   (crmd_plv       ),
+    .csr_crmd_da    (crmd_da        ),
+    .csr_crmd_pg    (crmd_pg        ),
+    .csr_crmd_datf  (crmd_datf      ),
+    .csr_crmd_datm  (crmd_datm      ),
+    .csr_dmw0_plv0  (dmw0_plv0      ),
+    .csr_dmw0_plv3  (dmw0_plv3      ),
+    .csr_dmw0_mat   (dmw0_mat       ),
+    .csr_dmw0_pseg  (dmw0_pseg      ),
+    .csr_dmw0_vseg  (dmw0_vseg      ),
+    .csr_dmw1_plv0  (dmw1_plv0      ),
+    .csr_dmw1_plv3  (dmw1_plv3      ),
+    .csr_dmw1_mat   (dmw1_mat       ),
+    .csr_dmw1_pseg  (dmw1_pseg      ),
+    .csr_dmw1_vseg  (dmw1_vseg      ),
+    .tlbr_ex        (tlbr_ex        ),
+    .csr_tlbrentry  (ex_tlbrentry   )
 );
 
 wire        exAllowin;
@@ -349,6 +402,9 @@ IDU u_IDU(
     .if2idPC            (if2idPC            ),
     .if2idInst          (if2idInst          ),
     .isadef             (isadef             ),
+    .if_tlbr_ex         (if_tlbr_ex         ),
+    .if_pif_ex          (if_pif_ex          ),
+    .if_ppi_ex          (if_ppi_ex          ),
     // to IFU
     .br_taken           (br_taken           ),
     .br_taken_cancel    (br_taken_cancel    ),
@@ -479,7 +535,23 @@ EXU u_EXU(
     .id2exChangeTLBEHI      (id2exChangeTLBEHI  ),
     .ex2memRefetch          (ex2memRefetch      ),
     .ex2memChangeTLB        (ex2memChangeTLB    ),
-    .ex2memChangeTLBEHI     (ex2memChangeTLBEHI )
+    .ex2memChangeTLBEHI     (ex2memChangeTLBEHI ),
+    .csr_crmd_plv       (crmd_plv       ),
+    .csr_crmd_da        (crmd_da        ),
+    .csr_crmd_pg        (crmd_pg        ),
+    .csr_crmd_datf      (crmd_datf      ),
+    .csr_crmd_datm      (crmd_datm      ),
+    .csr_dmw0_plv0      (dmw0_plv0      ),
+    .csr_dmw0_plv3      (dmw0_plv3      ),
+    .csr_dmw0_mat       (dmw0_mat       ),
+    .csr_dmw0_pseg      (dmw0_pseg      ),
+    .csr_dmw0_vseg      (dmw0_vseg      ),
+    .csr_dmw1_plv0      (dmw1_plv0      ),
+    .csr_dmw1_plv3      (dmw1_plv3      ),
+    .csr_dmw1_mat       (dmw1_mat       ),
+    .csr_dmw1_pseg      (dmw1_pseg      ),
+    .csr_dmw1_vseg      (dmw1_vseg      ),
+    .csr_asid_asid      (csr_asid_asid  )
 );
 
 wire        wbAllowin;
@@ -602,7 +674,10 @@ WBU u_WBU(
     .mem2wbChangeTLBEHI (mem2wbChangeTLBEHI ),
     .wbRefetch          (wbRefetch          ),
     .wbChangeTLB        (wbChangeTLB        ),
-    .wbChangeTLBEHI     (wbChangeTLBEHI     )
+    .wbChangeTLBEHI     (wbChangeTLBEHI     ),
+    .tlbr_ex            (tlbr_ex            ),
+    .if_tlb_refill      (if_tlb_refill      ),
+    .if_plv_ex          (if_plv_ex         )
 );
 
 regfile u_regfile(
@@ -677,7 +752,28 @@ csr_regs u_csr_regs(
     .w_d1           (tlb_w_d1       ),
     .w_v1           (tlb_w_v1       ),
     // use for TLB read/write
-    .tlb_index      (tlb_r_index    )
+    .tlb_index      (tlb_r_index    ),
+    .tlbr_ex        (tlbr_ex        ),
+    .if_tlb_refill  (if_tlb_refill  ),
+    .if_plv_ex      (if_plv_ex      ),
+    .crmd_plv       (crmd_plv       ),
+    .crmd_da        (crmd_da        ),
+    .crmd_pg        (crmd_pg        ),
+    .crmd_datf      (crmd_datf      ),
+    .crmd_datm      (crmd_datm      ),
+    .dmw0_plv0      (dmw0_plv0      ),
+    .dmw0_plv3      (dmw0_plv3      ),
+    .dmw0_mat       (dmw0_mat       ),
+    .dmw0_pseg      (dmw0_pseg      ),
+    .dmw0_vseg      (dmw0_vseg      ),
+    .dmw1_plv0      (dmw1_plv0      ),
+    .dmw1_plv3      (dmw1_plv3      ),
+    .dmw1_mat       (dmw1_mat       ),
+    .dmw1_pseg      (dmw1_pseg      ),
+    .dmw1_vseg      (dmw1_vseg      ),
+    .asid           (csr_asid_asid  ),
+    .stat_ecode     (stat_ecode     ),
+    .ex_tlbrentry   (ex_tlbrentry   )
 );
 
 // TLB instantiation

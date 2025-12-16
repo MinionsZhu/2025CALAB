@@ -1,8 +1,8 @@
 `ifndef BUSDEF_VH
 `define BUSDEF_VH
 
-`define CSRBUSW     103
-`define CSRBUSL     102:0
+`define CSRBUSW     105
+`define CSRBUSL     104:0
 
 // IDU
 `define ALUBUSW     113

@@ -1,4 +1,5 @@
 `include "busdef.vh"
+`include "ecodes.vh"
 module MEMU(
     input  wire        clk,
     input  wire        reset,
@@ -88,6 +89,8 @@ wire        exception;
 wire [ 5:0] ecode;
 wire [14:0] syscall_code;
 wire        memErtnFlush;
+wire        ifTlbrPass;
+wire        ifPpiPass;
 
 always @(posedge clk) begin
     if (reset) begin
@@ -165,7 +168,7 @@ end
 assign mem2wbChangeTLB = changeTLB && memValidReg;
 assign mem2wbChangeTLBEHI = changeTLBEHI && memValidReg;
 
-assign {csr, csr_we, csr_num, csr_wmask, csr_wvalue, exception, ecode, syscall_code, memErtnFlush} = csr_signals_reg;
+assign {csr, csr_we, csr_num, csr_wmask, csr_wvalue, exception, ecode, syscall_code, memErtnFlush, ifTlbrPass, ifPpiPass} = csr_signals_reg;
 
 assign pc           = pc_reg;
 assign inst         = inst_reg;
@@ -220,7 +223,10 @@ always @(posedge clk) begin
     end
 end
 
-assign memReadygo  =  is_sram_inst ? (data_sram_data_ok) : 1'b1;
+wire ecodeForReadygo;
+assign ecodeForReadygo = ecode==`ECODE_TLBR || ecode==`ECODE_PIL || ecode==`ECODE_PIF || ecode==`ECODE_PIS || ecode==`ECODE_PME || ecode==`ECODE_PPI;
+
+assign memReadygo  =  is_sram_inst ? (data_sram_data_ok || (exception && ecodeForReadygo)) : 1'b1;
 assign memValidout =  memValidReg &&  memReadygo;
 assign memAllowin  = (!memValidReg || (memReadygo && wbAllowin));
 
