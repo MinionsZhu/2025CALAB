@@ -182,6 +182,8 @@ reg    [ 1:0]   write_bank;     // 写入的 bank
 reg    [ 7:0]   write_index;    // 写入的 index
 reg    [ 3:0]   write_wstrb;    // 写入的 bank 内字节写使能
 reg    [31:0]   write_wdata;    // 写入的写数据
+reg             need_write;
+reg    [31:0]   write_origin_data;
 
 // 替换策略：RAND，选择用LFSR实现
 reg    [ 7:0]   LFSR;
@@ -200,6 +202,7 @@ wire  [127:0]   replace_data;
 wire            replaceIsdirty;
 
 wire            hitwrite;
+wire   [31:0]   hitwrite_mask;
 wire            hitwrite_conflict1; // 可以前递 TODO: 目前先按照阻塞实现
 wire            hitwrite_conflict2; // 只能阻塞
 wire            hitwrite_conflict;
@@ -248,8 +251,8 @@ assign mixed_word = {reg_wstrb[3] ? reg_wdata[31:24] : ret_data[31:24],
 assign refill_word = (refill_cnt == reg_offset[3:2] && reg_op == WRITE) ? mixed_word : ret_data;
 
 
-assign addr_ok = (cst == IDLE) || (cst == LOOKUP && valid && ~hitwrite_conflict);
-assign data_ok = (cst == LOOKUP && (cache_hit || reg_op == WRITE)) || (cst == REFILL && ret_valid && refill_cnt == reg_offset[3:2]);
+assign addr_ok = (cst == IDLE) || (cst == LOOKUP && cache_hit && ~hitwrite_conflict);    // 接收完成
+assign data_ok = (cst == LOOKUP && cache_hit) || (cst == REFILL && ret_valid && refill_cnt == reg_offset[3:2]); // 写入完成
 assign rdata = load_res;
 
 assign rd_req = (cst == REPLACE);   // 仅在 REPLACE 状态发起读请求
@@ -271,51 +274,55 @@ assign tv_wdata = {reg_tag, 1'b1};  // 有效位写1
 assign tv_addr = (cst == MISS || cst == REPLACE || cst == REFILL) ? reg_index : index;
 
 assign d_w0_b0_en = (en_lookup && (offset[3:2] == 2'b00))
-                 || (hitwrite && write_way == 1'b0)
+                 || (need_write && write_way == 1'b0)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
 assign d_w0_b1_en = (en_lookup && (offset[3:2] == 2'b01))
-                 || (hitwrite && write_way == 1'b0)
+                 || (need_write && write_way == 1'b0)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
 assign d_w0_b2_en = (en_lookup && (offset[3:2] == 2'b10))
-                 || (hitwrite && write_way == 1'b0)
+                 || (need_write && write_way == 1'b0)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
 assign d_w0_b3_en = (en_lookup && (offset[3:2] == 2'b11))
-                 || (hitwrite && write_way == 1'b0)
+                 || (need_write && write_way == 1'b0)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
 assign d_w1_b0_en = (en_lookup && (offset[3:2] == 2'b00))
-                 || (hitwrite && write_way == 1'b1)
+                 || (need_write && write_way == 1'b1)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
 assign d_w1_b1_en = (en_lookup && (offset[3:2] == 2'b01))
-                 || (hitwrite && write_way == 1'b1)
+                 || (need_write && write_way == 1'b1)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
 assign d_w1_b2_en = (en_lookup && (offset[3:2] == 2'b10))
-                 || (hitwrite && write_way == 1'b1)
+                 || (need_write && write_way == 1'b1)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
 assign d_w1_b3_en = (en_lookup && (offset[3:2] == 2'b11))
-                 || (hitwrite && write_way == 1'b1)
+                 || (need_write && write_way == 1'b1)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
 
-assign d_w0_b0_we = ({4{hitwrite && (write_way == 1'b0) && (write_bank == 2'b00)}} & write_wstrb)
+assign d_w0_b0_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b00)}} & write_wstrb)
                   | ({4{cst == REFILL && (replace_way == 1'b0) && (refill_cnt == 2'b00) && ret_valid}});
-assign d_w0_b1_we = ({4{hitwrite && (write_way == 1'b0) && (write_bank == 2'b01)}} & write_wstrb)
+assign d_w0_b1_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b01)}} & write_wstrb)
                   | ({4{cst == REFILL && (replace_way == 1'b0) && (refill_cnt == 2'b01) && ret_valid}});
-assign d_w0_b2_we = ({4{hitwrite && (write_way == 1'b0) && (write_bank == 2'b10)}} & write_wstrb)
+assign d_w0_b2_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b10)}} & write_wstrb)
                   | ({4{cst == REFILL && (replace_way == 1'b0) && (refill_cnt == 2'b10) && ret_valid}});
-assign d_w0_b3_we = ({4{hitwrite && (write_way == 1'b0) && (write_bank == 2'b11)}} & write_wstrb)
+assign d_w0_b3_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b11)}} & write_wstrb)
                   | ({4{cst == REFILL && (replace_way == 1'b0) && (refill_cnt == 2'b11) && ret_valid}});
-assign d_w1_b0_we = ({4{hitwrite && (write_way == 1'b1) && (write_bank == 2'b00)}} & write_wstrb)
+assign d_w1_b0_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b00)}} & write_wstrb)
                   | ({4{cst == REFILL && (replace_way == 1'b1) && (refill_cnt == 2'b00) && ret_valid}});
-assign d_w1_b1_we = ({4{hitwrite && (write_way == 1'b1) && (write_bank == 2'b01)}} & write_wstrb)
+assign d_w1_b1_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b01)}} & write_wstrb)
                   | ({4{cst == REFILL && (replace_way == 1'b1) && (refill_cnt == 2'b01) && ret_valid}});
-assign d_w1_b2_we = ({4{hitwrite && (write_way == 1'b1) && (write_bank == 2'b10)}} & write_wstrb)
+assign d_w1_b2_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b10)}} & write_wstrb)
                   | ({4{cst == REFILL && (replace_way == 1'b1) && (refill_cnt == 2'b10) && ret_valid}});
-assign d_w1_b3_we = ({4{hitwrite && (write_way == 1'b1) && (write_bank == 2'b11)}} & write_wstrb)
+assign d_w1_b3_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b11)}} & write_wstrb)
                   | ({4{cst == REFILL && (replace_way == 1'b1) && (refill_cnt == 2'b11) && ret_valid}});
 
+assign hitwrite_mask = {{8{write_wstrb[3]}}, 
+                        {8{write_wstrb[2]}}, 
+                        {8{write_wstrb[1]}}, 
+                        {8{write_wstrb[0]}}};
 assign d_wdata = {32{cst == REFILL}} & refill_word
-               | {32{hitwrite}} & write_wdata;
+               | {32{need_write}} & ((write_wdata & hitwrite_mask) | (write_origin_data & ~hitwrite_mask));
 assign d_addr = (cst == MISS || cst == REPLACE || cst == REFILL) ? reg_index :
-                (hitwrite) ? write_index : index;
+                (need_write) ? write_index : index;
 /* 状态机实现 */
 always @(posedge clk) begin
     if (reset) begin
@@ -490,18 +497,25 @@ end
 // Write Buffer
 always @(posedge clk) begin
     if (reset) begin
+        need_write <= 1'b0;
         write_way <= 1'b0;
         write_bank <= 2'b00;
         write_index <= 8'b0;
         write_wstrb <= 4'b0;
         write_wdata <= 32'b0;
+        write_origin_data <= 32'b0;
     end
     else if (hitwrite) begin
+        need_write <= 1'b1;
         write_way <= way1_hit;
         write_bank <= reg_offset[3:2];
         write_index <= reg_index;
         write_wstrb <= reg_wstrb;
         write_wdata <= reg_wdata;
+        write_origin_data <= way1_hit ? way1_load_word : way0_load_word;
+    end
+    else begin
+        need_write <= 1'b0;
     end
 end
 
