@@ -68,8 +68,8 @@ output wire                      r_d1,
 output wire                      r_v1
 );  // tlb from bookguide
 
-// VALEN: ĞéµØÖ·µÄÓĞĞ§Î»Êı£¬32Î»
-// PALEN: ÎïÀíµØÖ·µÄÓĞĞ§Î»Êı£¬32Î»
+// VALEN: è™šåœ°å€çš„æœ‰æ•ˆä½æ•°ï¼Œ32ä½
+// PALEN: ç‰©ç†åœ°å€çš„æœ‰æ•ˆä½æ•°ï¼Œ32ä½
 
 reg [TLBNUM-1:0] tlb_e;
 reg [TLBNUM-1:0] tlb_ps4MB; // pagesize [1]:4MB, [0]:4KB
@@ -156,7 +156,7 @@ assign s0_index =   s0_match[ 1] ? 4'd1  :
                     s0_match[13] ? 4'd13 :
                     s0_match[14] ? 4'd14 :
                     s0_match[15] ? 4'd15 :
-                    4'd0; // Default, Ã»ÓĞÕÒµ½Ê±ĞèÒª°ÑfoundÖÃÎª0
+                    4'd0; // Default, æ²¡æœ‰æ‰¾åˆ°æ—¶éœ€è¦æŠŠfoundç½®ä¸º0
 assign s1_index =   s1_match[ 1] ? 4'd1  :
                     s1_match[ 2] ? 4'd2  :
                     s1_match[ 3] ? 4'd3  :
@@ -172,7 +172,7 @@ assign s1_index =   s1_match[ 1] ? 4'd1  :
                     s1_match[13] ? 4'd13 :
                     s1_match[14] ? 4'd14 :
                     s1_match[15] ? 4'd15 :
-                    4'd0; // Default, Ã»ÓĞÕÒµ½Ê±ĞèÒª°ÑfoundÖÃÎª0
+                    4'd0; // Default, æ²¡æœ‰æ‰¾åˆ°æ—¶éœ€è¦æŠŠfoundç½®ä¸º0
 
 wire   s0_sel, s1_sel;
 assign s0_sel   = tlb_ps4MB[s0_index] ? s0_vppn[8] : s0_va_bit12;
