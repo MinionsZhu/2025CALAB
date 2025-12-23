@@ -31,7 +31,25 @@ module cache(
     input               wr_rdy      // 1 valid, be set before wr_req
 );
 
-wire        reset = ~resetn;
+wire        reset_wire;
+reg         reset;
+reg  [ 7:0] reset_cnt;
+always @(posedge clk) begin
+    if (~resetn) begin
+        reset <= 1'b1;
+    end
+    else if (reset_cnt == 8'hff) begin
+        reset <= 1'b0;
+    end
+end
+always @(posedge clk) begin
+    if (~resetn) begin
+        reset_cnt <= 8'b0;
+    end
+    else if (reset_cnt != 8'hff) begin
+        reset_cnt <= reset_cnt + 8'b1;
+    end
+end
 
 // CPU 请求类型 (op)
 localparam  READ    = 1'b0,
@@ -153,12 +171,13 @@ data_bank_ram way1_bank3(
 
 /* 状态机 */
 // 主状态机
-localparam      IDLE      = 4'b0000,    //
-                LOOKUP    = 4'b0001,    // 判断命中还是缺失
-                MISS      = 4'b0010,    // 将脏块写回内存
-                REPLACE   = 4'b0100,    // 动作最密集，发送缺失读请求以及脏位下的写回请求
-                REFILL    = 4'b1000;    //
-reg    [ 3:0]   cst, nst;
+localparam      INIT      = 5'b00000,    //
+                IDLE      = 5'b00001,    //
+                LOOKUP    = 5'b00010,    // 判断命中还是缺失
+                MISS      = 5'b00100,    // 将脏块写回内存
+                REPLACE   = 5'b01000,    // 动作最密集，发送缺失读请求以及脏位下的写回请求
+                REFILL    = 5'b10000;    //
+reg    [ 4:0]   cst, nst;
 // Write Buffer 状态机
 localparam      WB_IDLE   = 1'b0,
                 WB_WRITE  = 1'b1;
@@ -225,9 +244,12 @@ assign way1_data = {d_w1_b3_rdata, d_w1_b2_rdata, d_w1_b1_rdata, d_w1_b0_rdata};
 
 assign way0_load_word = way0_data[reg_offset[3:2] * 32 +: 32];
 assign way1_load_word = way1_data[reg_offset[3:2] * 32 +: 32];
-assign load_res = ({32{way0_hit}} & way0_load_word)
-                | ({32{way1_hit}} & way1_load_word)
-                | ({32{cst == REFILL}} & ret_data); // 选择通过 ok 信号实现
+// assign load_res = ({32{way0_hit}} & way0_load_word)
+//                 | ({32{way1_hit}} & way1_load_word)
+//                 | ({32{cst == REFILL}} & ret_data); // 选择通过 ok 信号实现
+assign load_res = cst == REFILL ? ret_data :
+                        way0_hit ? way0_load_word :
+                        way1_load_word;
 assign replace_data = replace_way ? way1_data : way0_data;
 
 assign replaceIsdirty = replace_way ? dirty_way1[reg_index] && way1_v : dirty_way0[reg_index] && way0_v;
@@ -266,68 +288,70 @@ assign wr_wstrb = 4'hf;
 assign wr_data = replace_data;
 
 
-assign tv_w0_en = en_lookup || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
-assign tv_w1_en = en_lookup || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
-assign tv_w0_we = (cst == REFILL && replace_way == 1'b0) && ret_valid && ret_last;
-assign tv_w1_we = (cst == REFILL && replace_way == 1'b1) && ret_valid && ret_last;
-assign tv_wdata = {reg_tag, 1'b1};  // 有效位写1
-assign tv_addr = (cst == MISS || cst == REPLACE || cst == REFILL) ? reg_index : index;
+assign tv_w0_en = en_lookup || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0) || reset;
+assign tv_w1_en = en_lookup || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1) || reset;
+assign tv_w0_we = (cst == REFILL && replace_way == 1'b0) && ret_valid && ret_last || reset;
+assign tv_w1_we = (cst == REFILL && replace_way == 1'b1) && ret_valid && ret_last || reset;
+assign tv_wdata = reset ? 21'b0 : {reg_tag, 1'b1};  // 有效位写1
+assign tv_addr = reset ? reset_cnt :
+                (cst == MISS || cst == REPLACE || cst == REFILL) ? reg_index : index;
 
-assign d_w0_b0_en = (en_lookup && (offset[3:2] == 2'b00))
+assign d_w0_b0_en = (en_lookup && (offset[3:2] == 2'b00)) || reset
+                 || (need_write && write_way == 1'b0)   // need write 可以使用wbcst
+                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
+assign d_w0_b1_en = (en_lookup && (offset[3:2] == 2'b01)) || reset
                  || (need_write && write_way == 1'b0)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
-assign d_w0_b1_en = (en_lookup && (offset[3:2] == 2'b01))
+assign d_w0_b2_en = (en_lookup && (offset[3:2] == 2'b10)) || reset
                  || (need_write && write_way == 1'b0)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
-assign d_w0_b2_en = (en_lookup && (offset[3:2] == 2'b10))
+assign d_w0_b3_en = (en_lookup && (offset[3:2] == 2'b11)) || reset
                  || (need_write && write_way == 1'b0)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
-assign d_w0_b3_en = (en_lookup && (offset[3:2] == 2'b11))
-                 || (need_write && write_way == 1'b0)
-                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
-assign d_w1_b0_en = (en_lookup && (offset[3:2] == 2'b00))
+assign d_w1_b0_en = (en_lookup && (offset[3:2] == 2'b00)) || reset
                  || (need_write && write_way == 1'b1)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
-assign d_w1_b1_en = (en_lookup && (offset[3:2] == 2'b01))
+assign d_w1_b1_en = (en_lookup && (offset[3:2] == 2'b01)) || reset
                  || (need_write && write_way == 1'b1)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
-assign d_w1_b2_en = (en_lookup && (offset[3:2] == 2'b10))
+assign d_w1_b2_en = (en_lookup && (offset[3:2] == 2'b10)) || reset
                  || (need_write && write_way == 1'b1)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
-assign d_w1_b3_en = (en_lookup && (offset[3:2] == 2'b11))
+assign d_w1_b3_en = (en_lookup && (offset[3:2] == 2'b11)) || reset
                  || (need_write && write_way == 1'b1)
                  || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
 
-assign d_w0_b0_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b00)}} & write_wstrb)
+assign d_w0_b0_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b00)}} & write_wstrb) | ({4{reset}})
                   | ({4{cst == REFILL && (replace_way == 1'b0) && (refill_cnt == 2'b00) && ret_valid}});
-assign d_w0_b1_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b01)}} & write_wstrb)
+assign d_w0_b1_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b01)}} & write_wstrb) | ({4{reset}})
                   | ({4{cst == REFILL && (replace_way == 1'b0) && (refill_cnt == 2'b01) && ret_valid}});
-assign d_w0_b2_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b10)}} & write_wstrb)
+assign d_w0_b2_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b10)}} & write_wstrb) | ({4{reset}})
                   | ({4{cst == REFILL && (replace_way == 1'b0) && (refill_cnt == 2'b10) && ret_valid}});
-assign d_w0_b3_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b11)}} & write_wstrb)
+assign d_w0_b3_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b11)}} & write_wstrb) | ({4{reset}})
                   | ({4{cst == REFILL && (replace_way == 1'b0) && (refill_cnt == 2'b11) && ret_valid}});
-assign d_w1_b0_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b00)}} & write_wstrb)
+assign d_w1_b0_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b00)}} & write_wstrb) | ({4{reset}})
                   | ({4{cst == REFILL && (replace_way == 1'b1) && (refill_cnt == 2'b00) && ret_valid}});
-assign d_w1_b1_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b01)}} & write_wstrb)
+assign d_w1_b1_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b01)}} & write_wstrb) | ({4{reset}})
                   | ({4{cst == REFILL && (replace_way == 1'b1) && (refill_cnt == 2'b01) && ret_valid}});
-assign d_w1_b2_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b10)}} & write_wstrb)
+assign d_w1_b2_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b10)}} & write_wstrb) | ({4{reset}})
                   | ({4{cst == REFILL && (replace_way == 1'b1) && (refill_cnt == 2'b10) && ret_valid}});
-assign d_w1_b3_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b11)}} & write_wstrb)
+assign d_w1_b3_we = ({4{need_write && (write_way == 1'b1) && (write_bank == 2'b11)}} & write_wstrb) | ({4{reset}})
                   | ({4{cst == REFILL && (replace_way == 1'b1) && (refill_cnt == 2'b11) && ret_valid}});
 
 assign hitwrite_mask = {{8{write_wstrb[3]}}, 
                         {8{write_wstrb[2]}}, 
                         {8{write_wstrb[1]}}, 
                         {8{write_wstrb[0]}}};
-assign d_wdata = {32{cst == REFILL}} & refill_word
-               | {32{need_write}} & ((write_wdata & hitwrite_mask) | (write_origin_data & ~hitwrite_mask));
-assign d_addr = (cst == MISS || cst == REPLACE || cst == REFILL) ? reg_index :
+assign d_wdata = reset ? 32'b0 : {32{cst == REFILL}} & refill_word
+                               | {32{need_write}} & ((write_wdata & hitwrite_mask) | (write_origin_data & ~hitwrite_mask));
+assign d_addr = (reset) ? reset_cnt :
+                (cst == MISS || cst == REPLACE || cst == REFILL) ? reg_index :
                 (need_write) ? write_index : index;
 /* 状态机实现 */
 always @(posedge clk) begin
     if (reset) begin
         // 主状态机复位
-        cst <= IDLE;
+        cst <= INIT;
         // Write Buffer 状态机复位
         wb_cst <= WB_IDLE;
     end
@@ -340,10 +364,13 @@ always @(posedge clk) begin
 end
 always @(*) begin
     if (reset) begin
-        nst = IDLE;
+        nst = INIT;
     end
     else begin
     case (cst)
+    INIT: begin
+        nst = IDLE;
+    end
     IDLE: begin
         if (valid && (~hitwrite_conflict)) begin
             nst = LOOKUP;
@@ -388,7 +415,7 @@ always @(*) begin
         end
     end
     default:begin
-        nst = IDLE;
+        nst = INIT;
     end
     endcase
     end
@@ -396,6 +423,10 @@ end
 
 // 类似于DMA，给数据就写
 always @(*) begin
+    if (reset) begin
+        wb_nst = WB_IDLE;
+    end
+    else begin
     case (wb_cst)
     WB_IDLE: begin
         if (hitwrite) begin
@@ -415,8 +446,9 @@ always @(*) begin
     end
     default:begin
         wb_nst = WB_IDLE;
-    end 
+    end
     endcase
+    end
 end
 
 always @(posedge clk) begin
