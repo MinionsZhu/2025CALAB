@@ -530,7 +530,6 @@ end
 // Write Buffer
 always @(posedge clk) begin
     if (reset) begin
-        need_write <= 1'b0;
         write_way <= 1'b0;
         write_bank <= 2'b00;
         write_index <= 8'b0;
