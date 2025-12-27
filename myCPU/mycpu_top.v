@@ -50,16 +50,6 @@ module mycpu_top(
     output wire [ 4:0] debug_wb_rf_wnum,
     output wire [31:0] debug_wb_rf_wdata
 );
-// inst sram interface
-wire        inst_sram_req;
-wire        inst_sram_wr;
-wire [ 1:0] inst_sram_size;
-wire [ 3:0] inst_sram_wstrb;
-wire [31:0] inst_sram_addr;
-wire [31:0] inst_sram_wdata;
-wire        inst_sram_addr_ok;
-wire        inst_sram_data_ok;
-wire [31:0] inst_sram_rdata;
 // data sram interface
 wire        data_sram_req;
 wire        data_sram_wr;
@@ -140,6 +130,7 @@ cpu_axi_bridge u_cpu_axi_bridge(
 );
 
 wire        reset;
+assign      reset = ~aresetn;
 
 wire        idAllowin;
 wire        ifValidout;
@@ -291,7 +282,7 @@ wire [ 9:0] csr_asid_asid;
 wire [ 5:0] stat_ecode;
 wire [31:0] ex_tlbrentry;
 
-// icache interface
+// icache pipeline interface
 wire        icache_rst;
 wire        icache_valid;
 wire        icache_op;
@@ -305,7 +296,7 @@ wire        icache_addr_ok;
 wire        icache_data_ok;
 wire [31:0] icache_rdata;
 
-// dcache interface
+// dcache pipeline interface
 wire        dcache_rst;
 wire        dcache_valid;
 wire        dcache_op;
@@ -318,6 +309,7 @@ wire [31:0] dcache_wdata;
 wire        dcache_addr_ok;
 wire        dcache_data_ok;
 wire [31:0] dcache_rdata;
+assign      dcache_rst = 1'b0;  // temperary assign
 
 // reset for cpu core
 wire        reset_core;
@@ -328,7 +320,7 @@ assign tlb_stall = mem2wbChangeTLBEHI | wbChangeTLBEHI;
 
 cache u_icache(
     .clk            (aclk           ),
-    .reset          (reset          ),
+    .resetn         (aresetn        ),
     .rst            (icache_rst     ),
     // icache interface
     .valid          (icache_valid   ),
@@ -343,8 +335,19 @@ cache u_icache(
     .data_ok        (icache_data_ok ),
     .rdata          (icache_rdata   ),
     // AXI interface
-
-    
+    .rd_req         (icache_rd_req  ),
+    .rd_type        (icache_rd_type ),
+    .rd_addr        (icache_rd_addr ),
+    .rd_rdy         (icache_rd_rdy  ),
+    .ret_valid      (icache_ret_valid),
+    .ret_last       (icache_ret_last),
+    .ret_data       (icache_ret_data),
+    .wr_req         (               ), // not used
+    .wr_type        (               ), // not used
+    .wr_addr        (               ), // not used
+    .wr_wstrb       (               ), // not used
+    .wr_data        (               ), // not used
+    .wr_rdy         (1'b1           )  // not used
 );
 
 IFU u_IFU(
@@ -395,6 +398,7 @@ IFU u_IFU(
     .s0_found       (s0_found       ),
     .s0_ppn         (s0_ppn         ),
     .s0_plv         (s0_plv         ),
+    .s0_mat         (s0_mat         ),
     .s0_v           (s0_v           ),
     .csr_crmd_plv   (crmd_plv       ),
     .csr_crmd_da    (crmd_da        ),
@@ -905,33 +909,6 @@ tlb #(
     .r_mat1         (tlb_r_mat1     ),
     .r_d1           (tlb_r_d1       ),
     .r_v1           (tlb_r_v1       )
-);
-
-cache Icache(
-    .clk            (aclk           ),
-    .resetn         (aresetn        ),
-    .rst            (reset          ),
-    // CPU Interface, 暂定
-    .valid          (inst_sram_req  ),
-    .op             (inst_sram_wr   ),
-    .uncached       (),
-    .index          (),
-    .tag            (),
-    .offset         (),
-    .wstrb          (inst_sram_wstrb),
-    .wdata          (inst_sram_wdata),
-    .addr_ok        (inst_sram_addr_ok),
-    .data_ok        (inst_sram_data_ok),
-    .rdata          (inst_sram_rdata),
-
-    // AXI Interface
-    .rd_req         (icache_rd_req  ),
-    .rd_type        (icache_rd_type ),
-    .rd_addr        (icache_rd_addr ),
-    .rd_rdy         (icache_rd_rdy  ),
-    .ret_valid      (icache_ret_valid),
-    .ret_last       (icache_ret_last),
-    .ret_data       (icache_ret_data)
 );
 
 endmodule
