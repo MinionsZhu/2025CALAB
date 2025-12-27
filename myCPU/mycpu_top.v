@@ -286,28 +286,83 @@ wire [ 9:0] csr_asid_asid;
 wire [ 5:0] stat_ecode;
 wire [31:0] ex_tlbrentry;
 
+// icache interface
+wire        icache_rst;
+wire        icache_valid;
+wire        icache_op;
+wire        icache_uncached;
+wire [ 7:0] icache_index;
+wire [19:0] icache_tag;
+wire [ 3:0] icache_offset;
+wire [ 3:0] icache_wstrb;
+wire [31:0] icache_wdata;
+wire        icache_addr_ok;
+wire        icache_data_ok;
+wire [31:0] icache_rdata;
+
+// dcache interface
+wire        dcache_rst;
+wire        dcache_valid;
+wire        dcache_op;
+wire        dcache_uncached;
+wire [ 7:0] dcache_index;
+wire [19:0] dcache_tag;
+wire [ 3:0] dcache_offset;
+wire [ 3:0] dcache_wstrb;
+wire [31:0] dcache_wdata;
+wire        dcache_addr_ok;
+wire        dcache_data_ok;
+wire [31:0] dcache_rdata;
+
+// reset for cpu core
+wire        reset_core;
+assign      reset_core = reset | icache_rst | dcache_rst;
+
 assign changeTLB_stall = id2exChangeTLB | ex2memChangeTLB | mem2wbChangeTLB;
 assign tlb_stall = mem2wbChangeTLBEHI | wbChangeTLBEHI;
 
+cache u_icache(
+    .clk            (aclk           ),
+    .reset          (reset          ),
+    .rst            (icache_rst     ),
+    // icache interface
+    .valid          (icache_valid   ),
+    .op             (icache_op      ),
+    .uncached       (icache_uncached),
+    .index          (icache_index   ),
+    .tag            (icache_tag     ),
+    .offset         (icache_offset  ),
+    .wstrb          (icache_wstrb   ),
+    .wdata          (icache_wdata   ),
+    .addr_ok        (icache_addr_ok ),
+    .data_ok        (icache_data_ok ),
+    .rdata          (icache_rdata   ),
+    // AXI interface
+
+    
+);
+
 IFU u_IFU(
-    .clk                (aclk            ),
-    .reset              (reset          ),
+    .clk                (aclk           ),
+    .reset              (reset_core     ),
     // ie
     .wb_ex              (wb_ex          ),
     .ertn_flush         (ertn_flush     ),
     // pc from csr
     .ex_entry           (ex_entry       ),
     .ertn_pc            (ertn_pc        ),
-    // inst sram interface
-    .inst_sram_req      (inst_sram_req  ),
-    .inst_sram_wr       (inst_sram_wr   ),
-    .inst_sram_size     (inst_sram_size ),
-    .inst_sram_wstrb    (inst_sram_wstrb),
-    .inst_sram_addr     (inst_sram_addr ),
-    .inst_sram_wdata    (inst_sram_wdata),
-    .inst_sram_addr_ok  (inst_sram_addr_ok),
-    .inst_sram_data_ok  (inst_sram_data_ok),
-    .inst_sram_rdata    (inst_sram_rdata),
+    // icache interface
+    .icache_valid       (icache_valid   ),
+    .icache_op          (icache_op      ),
+    .icache_uncached    (icache_uncached),
+    .icache_index       (icache_index   ),
+    .icache_tag         (icache_tag     ),
+    .icache_offset      (icache_offset  ),
+    .icache_wstrb       (icache_wstrb   ),
+    .icache_wdata       (icache_wdata   ),
+    .icache_addr_ok     (icache_addr_ok ),
+    .icache_data_ok     (icache_data_ok ),
+    .icache_rdata       (icache_rdata   ),
     // from IDU
     .br_taken           (br_taken       ),
     .br_taken_cancel    (br_taken_cancel),
@@ -393,7 +448,7 @@ wire        WB_csr;
 
 IDU u_IDU(
     .clk                (aclk               ),
-    .reset              (reset              ),
+    .reset              (reset_core         ),
     // ie
     .wb_ex              (wb_ex | wbRefetch  ),
     .ertn_flush         (ertn_flush         ),
@@ -468,7 +523,7 @@ wire [ 9:0] ex2memTLBBus;
 
 EXU u_EXU(
     .clk                    (aclk                ),
-    .reset                  (reset              ),
+    .reset                  (reset_core          ),
     // ie
     .wb_ex                  (wb_ex | wbRefetch  ),
     .ertn_flush             (ertn_flush         ),
@@ -566,7 +621,7 @@ wire [ 9:0] mem2wbTLBBus;
 
 MEMU u_MEMU(
     .clk                    (aclk                ),
-    .reset                  (reset              ),
+    .reset                  (reset_core          ),
     .wb_ex                  (wb_ex | wbRefetch  ),
     .ertn_flush             (ertn_flush         ),
     // handshaking signals with EXU
@@ -616,7 +671,7 @@ wire [31:0] rf_wdata;
 wire        rf_we;
 WBU u_WBU(
     .clk                (aclk                ),
-    .reset              (reset              ),
+    .reset              (reset_core          ),
     // handshaking signals with MEM
     .memValidout        (memValidout        ),
     .wbAllowin          (wbAllowin          ),
@@ -693,7 +748,7 @@ regfile u_regfile(
 
 csr_regs u_csr_regs(
     .clk            (aclk            ),
-    .reset          (reset          ),
+    .reset          (reset_core      ),
     .csr_num        (csr_num        ),
     .csr_re         (csr_re         ),
     .csr_we         (csr_we         ),

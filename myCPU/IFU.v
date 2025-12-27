@@ -11,16 +11,18 @@ module IFU(
     input  wire [31:0] ex_entry,
     input  wire [31:0] ertn_pc,
 
-    // inst sram interface
-    output wire        inst_sram_req,
-    output wire        inst_sram_wr,
-    output wire [ 1:0] inst_sram_size,
-    output wire [ 3:0] inst_sram_wstrb,
-    output wire [31:0] inst_sram_addr,
-    output wire [31:0] inst_sram_wdata,
-    input  wire        inst_sram_addr_ok,
-    input  wire        inst_sram_data_ok,
-    input  wire [31:0] inst_sram_rdata,
+    // icache interface
+    output wire        icache_valid,
+    output wire        icache_op,
+    output wire        icache_uncached,
+    output wire [ 7:0] icache_index,
+    output wire [19:0] icache_tag,
+    output wire [ 3:0] icache_offset,
+    output wire [ 3:0] icache_wstrb,
+    output wire [31:0] icache_wdata,
+    input  wire        icache_addr_ok,
+    input  wire        icache_data_ok,
+    input  wire [31:0] icache_rdata,
 
     // from IDU
     input  wire        br_taken,
@@ -53,6 +55,7 @@ module IFU(
     input  wire        s0_found,
     input  wire [19:0] s0_ppn,
     input  wire [ 1:0] s0_plv,
+    input  wire [ 1:0] s0_mat,  // add in exp21
     input  wire        s0_v,
 
     input  wire [1:0]  csr_crmd_plv,
@@ -122,8 +125,8 @@ module IFU(
         .clk(clk),
         .reset(reset),
         .dataReq(idAllowin || instCancelReg),
-        .Validin(inst_sram_data_ok),
-        .data_in(inst_sram_rdata),
+        .Validin(icache_data_ok),
+        .data_in(icache_rdata),
         .Validout(instValidout),
         .data_out(if2idInst)
     );
@@ -176,7 +179,7 @@ module IFU(
     wire preif_addr_ex;
     assign preif_addr_ex = preif_tlbr_ex || preif_pif_ex || preif_ppi_ex;
     assign preifValidout = preifValidReg && preifReadygo;
-    assign preifReadygo = inst_sram_req && inst_sram_addr_ok && !preif_addr_ex || preif_addr_ex;
+    assign preifReadygo = icache_valid && icache_addr_ok && !preif_addr_ex || preif_addr_ex;
     assign preifAllowin = (!preifValidReg || (preifReadygo && ifAllowin)) && !br_stall && !reset;
 
     /*******************************/
@@ -218,7 +221,7 @@ module IFU(
         if (reset) begin
             instCancelReg <= 1'b0;
         end
-        else if (inst_sram_data_ok) begin   // exp14 BUG: it should has higher priority than (br_taken_cancel | wb_ex | ertn_flush) && (!ifAllowin && !ifReadygo)
+        else if (icache_data_ok) begin   // exp14 BUG: it should has higher priority than (br_taken_cancel | wb_ex | ertn_flush) && (!ifAllowin && !ifReadygo)
             instCancelReg <= 1'b0;
         end
         else if ((br_taken_cancel | wb_ex | ertn_flush | wb_refetch) && (!ifAllowin && !ifReadygo)) begin  // exp14 BUG: when preifValidout = 1, do not cancel
@@ -246,24 +249,30 @@ module IFU(
             ppi_ex_reg  <= 1'b0;
         end
     end
-    wire if_addr_ex;
+    wire   if_addr_ex;
     assign if_addr_ex = tlbr_ex_reg || pif_ex_reg || ppi_ex_reg;
     assign ifValidout = ifValidReg && ifReadygo;    // exp14 BUG: do not write (ifValidReg || instValidout) && ifReadygo
-    assign ifReadygo = (inst_sram_data_ok || instValidout || if_addr_ex) && !instCancelReg && !changeTLB_stall;
+    assign ifReadygo = (icache_data_ok || instValidout || if_addr_ex) && !instCancelReg && !changeTLB_stall;
     assign ifAllowin = (!ifValidReg || (ifReadygo && idAllowin)) && !instCancelReg;
 
     assign seq_pc    = pc + 4;
     assign if2idPC   = pc;
 
     /*******************************/
-    /*     inst sram interface     */
+    /*      icache interface       */
     /*******************************/
-    assign inst_sram_req    = preifValidReg && ifAllowin && !preif_addr_ex;
-    assign inst_sram_wr     = 1'b0;
-    assign inst_sram_size   = 2'b10;
-    assign inst_sram_wstrb  = 4'b0000;
-    assign inst_sram_addr   = { nextpc_p[31:2], 2'b00 };
-    assign inst_sram_wdata  = 32'b0;
+    assign icache_valid     = preifValidReg && ifAllowin && !preif_addr_ex;
+    assign icache_op        = 1'b0;
+    assign icache_wstrb     = 4'b0000;
+    assign icache_wdata     = 32'b0;
+    assign icache_index     = nextpc_p[11:4];
+    assign icache_tag       = nextpc_p[31:12];
+    assign icache_offset    = nextpc_p[3:0];
+    assign icache_uncached  = (dat) ? (csr_crmd_datf == 2'b00) :
+                              (pat) ? (dmw0_hit ? (csr_dmw0_mat == 2'b00) :
+                                       dmw1_hit ? (csr_dmw1_mat == 2'b00) : 
+                                      (s0_mat == 2'b00))
+                                    : 1'b0;  // if not dat or pat, then uncached is 0
 
     /*******************************/
     /*   ADEF exception register   */
