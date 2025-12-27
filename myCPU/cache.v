@@ -1,10 +1,12 @@
 module cache(
     input               clk,
     input               resetn,
+    output              rst,
 
     // CPU Interface
     input               valid,      // 请求有效
     input               op,         // 1: write, 0: read
+    input               uncached,   // 1: 不缓存访问，直接通过cache访问内存
     input    [ 7:0]     index,
     input    [19:0]     tag,        // 经虚实地址转换后的物理地址高位，来自组合逻辑
     input    [ 3:0]     offset,
@@ -26,13 +28,13 @@ module cache(
     output              wr_req,     // 写请求有效
     output   [ 2:0]     wr_type,    // 写请求类型 3'b000: byte, 3'b001: half, 3'b010: word, 3'b011: double word
     output   [31:0]     wr_addr,
-    output   [ 3:0]     wr_wstrb,
+    output   [ 3:0]     wr_wstrb,   // 仅在写请求类型为3'b000、3'b001、3'b010情况下才有意义
     output  [127:0]     wr_data,
     input               wr_rdy      // 1 valid, be set before wr_req
 );
 
-wire        reset_wire;
 reg         reset;
+assign rst = reset;
 reg  [ 7:0] reset_cnt;
 always @(posedge clk) begin
     if (~resetn) begin
@@ -62,10 +64,10 @@ localparam  READ_BYTE       = 3'b000, // 1 Byte
             READ_BLOCK      = 3'b100; // 16 Bytes
 
 // AXI 写请求类型 (wr_type)
-localparam  WRITE_BYTE      = 3'b000,
-            WRITE_HALFWORD  = 3'b001,
-            WRITE_WORD      = 3'b010,
-            WRITE_BLOCK     = 3'b100;
+localparam  WRITE_BYTE      = 3'b000, // 1 Byte
+            WRITE_HALFWORD  = 3'b001, // 2 Bytes
+            WRITE_WORD      = 3'b010, // 4 Bytes
+            WRITE_BLOCK     = 3'b100; // 16 Bytes
 
 
 /* 例化tagv RAM、data bank RAM 和 dirty bit regfile */
@@ -201,7 +203,6 @@ reg    [ 1:0]   write_bank;     // 写入的 bank
 reg    [ 7:0]   write_index;    // 写入的 index
 reg    [ 3:0]   write_wstrb;    // 写入的 bank 内字节写使能
 reg    [31:0]   write_wdata;    // 写入的写数据
-reg             need_write;
 reg    [31:0]   write_origin_data;
 
 // 替换策略：RAND，选择用LFSR实现
@@ -221,6 +222,7 @@ wire  [127:0]   replace_data;
 wire            replaceIsdirty;
 
 wire            hitwrite;
+wire            need_write;
 wire   [31:0]   hitwrite_mask;
 wire            hitwrite_conflict1; // 可以前递 TODO: 目前先按照阻塞实现
 wire            hitwrite_conflict2; // 只能阻塞
@@ -236,7 +238,7 @@ assign {way1_tag, way1_v} = tv_w1_rdata;
 
 assign way0_hit = way0_v && (way0_tag == reg_tag);
 assign way1_hit = way1_v && (way1_tag == reg_tag);
-assign cache_hit = way0_hit || way1_hit;    // TODO: Uncache 访问不考虑
+assign cache_hit = (way0_hit || way1_hit) && (~uncached); // 非缓存访问不命中
 
 // 数据选择
 assign way0_data = {d_w0_b3_rdata, d_w0_b2_rdata, d_w0_b1_rdata, d_w0_b0_rdata};
@@ -244,17 +246,14 @@ assign way1_data = {d_w1_b3_rdata, d_w1_b2_rdata, d_w1_b1_rdata, d_w1_b0_rdata};
 
 assign way0_load_word = way0_data[reg_offset[3:2] * 32 +: 32];
 assign way1_load_word = way1_data[reg_offset[3:2] * 32 +: 32];
-// assign load_res = ({32{way0_hit}} & way0_load_word)
-//                 | ({32{way1_hit}} & way1_load_word)
-//                 | ({32{cst == REFILL}} & ret_data); // 选择通过 ok 信号实现
-assign load_res = cst == REFILL ? ret_data :
-                        way0_hit ? way0_load_word :
-                        way1_load_word;
+assign load_res = (cst == REFILL) ? ret_data :
+                   way1_hit ? way1_load_word : way0_load_word;
 assign replace_data = replace_way ? way1_data : way0_data;
 
 assign replaceIsdirty = replace_way ? dirty_way1[reg_index] && way1_v : dirty_way0[reg_index] && way0_v;
 
 assign hitwrite = (cst == LOOKUP) && cache_hit & (reg_op == WRITE);
+assign need_write = (wb_cst == WB_WRITE);
 assign hitwrite_conflict1 = (cst == LOOKUP)     // 主状态机处于 LOOKUP 状态
                 && (reg_op == WRITE)            // 且发现 Store 操作命中 Cache
                 && (op == READ && valid)        // 此时流水线发来一个新的 Load 类的 Cache 访问请求
@@ -274,22 +273,24 @@ assign refill_word = (refill_cnt == reg_offset[3:2] && reg_op == WRITE) ? mixed_
 
 
 assign addr_ok = (cst == IDLE) || (cst == LOOKUP && cache_hit && ~hitwrite_conflict);    // 接收完成
-assign data_ok = (cst == LOOKUP && cache_hit) || (cst == REFILL && ret_valid && refill_cnt == reg_offset[3:2]); // 写入完成
+assign data_ok = (cst == LOOKUP && cache_hit) || (cst == REFILL && ret_valid && ((refill_cnt == reg_offset[3:2]) || (uncached && ret_last))); // 写入完成
 assign rdata = load_res;
 
-assign rd_req = (cst == REPLACE);   // 仅在 REPLACE 状态发起读请求
-assign rd_type = READ_BLOCK;
-assign rd_addr = {reg_tag, reg_index, 4'b0000};
+// 仅在 REPLACE 状态发起读请求；如果是非缓存访问，对于 store 操作则不发起读请求
+assign rd_req = (cst == REPLACE) && ~(uncached && (reg_op == WRITE));
+assign rd_type = uncached ? READ_WORD : READ_BLOCK; // 非缓存访问读 4 字节
+assign rd_addr = uncached ? {reg_tag, reg_index, reg_offset[3:2], 2'b00} : {reg_tag, reg_index, 4'b0000};
 
-assign wr_req = (cst == REPLACE) && replaceIsdirty; // 仅在 REPLACE 状态且替换块为脏块时发起写请求
-assign wr_type = WRITE_BLOCK;
-assign wr_addr = {replace_way ? way1_tag : way0_tag, reg_index, 4'b0000};
-assign wr_wstrb = 4'hf;
-assign wr_data = replace_data;
+// 仅在 REPLACE 状态且替换块为脏块时发起写请求；如果是非缓存访问，对于 load 操作则不发起写请求
+assign wr_req = (cst == REPLACE) && (uncached ? reg_op == WRITE : replaceIsdirty);
+assign wr_type = uncached ? WRITE_WORD : WRITE_BLOCK; // 非缓存访问写 4 字节
+assign wr_addr = uncached ? {reg_tag, reg_index, reg_offset[3:2], 2'b00} : {replace_way ? way1_tag : way0_tag, reg_index, 4'b0000};
+assign wr_wstrb = reg_wstrb; // 非缓存访问时，写请求的字节使能直接使用 request buffer 里的值；而在缓存访问时，写请求类型为写回整个 Cache 行，字节使能无意义
+assign wr_data = uncached ? reg_wdata : replace_data; // 数据在 request buffer 里已经准备好
 
 
-assign tv_w0_en = en_lookup || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0) || reset;
-assign tv_w1_en = en_lookup || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1) || reset;
+assign tv_w0_en = en_lookup || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0 && ~uncached) || reset;
+assign tv_w1_en = en_lookup || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1 && ~uncached) || reset;
 assign tv_w0_we = (cst == REFILL && replace_way == 1'b0) && ret_valid && ret_last || reset;
 assign tv_w1_we = (cst == REFILL && replace_way == 1'b1) && ret_valid && ret_last || reset;
 assign tv_wdata = reset ? 21'b0 : {reg_tag, 1'b1};  // 有效位写1
@@ -297,29 +298,29 @@ assign tv_addr = reset ? reset_cnt :
                 (cst == MISS || cst == REPLACE || cst == REFILL) ? reg_index : index;
 
 assign d_w0_b0_en = (en_lookup && (offset[3:2] == 2'b00)) || reset
-                 || (need_write && write_way == 1'b0)   // need write 可以使用wbcst
-                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
+                 || (need_write && write_way == 1'b0)
+                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0 && ~uncached);
 assign d_w0_b1_en = (en_lookup && (offset[3:2] == 2'b01)) || reset
                  || (need_write && write_way == 1'b0)
-                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
+                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0 && ~uncached);
 assign d_w0_b2_en = (en_lookup && (offset[3:2] == 2'b10)) || reset
                  || (need_write && write_way == 1'b0)
-                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
+                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0 && ~uncached);
 assign d_w0_b3_en = (en_lookup && (offset[3:2] == 2'b11)) || reset
                  || (need_write && write_way == 1'b0)
-                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0);
+                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0 && ~uncached);
 assign d_w1_b0_en = (en_lookup && (offset[3:2] == 2'b00)) || reset
                  || (need_write && write_way == 1'b1)
-                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
+                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1 && ~uncached);
 assign d_w1_b1_en = (en_lookup && (offset[3:2] == 2'b01)) || reset
                  || (need_write && write_way == 1'b1)
-                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
+                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1 && ~uncached);
 assign d_w1_b2_en = (en_lookup && (offset[3:2] == 2'b10)) || reset
                  || (need_write && write_way == 1'b1)
-                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
+                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1 && ~uncached);
 assign d_w1_b3_en = (en_lookup && (offset[3:2] == 2'b11)) || reset
                  || (need_write && write_way == 1'b1)
-                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1);
+                 || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1 && ~uncached);
 
 assign d_w0_b0_we = ({4{need_write && (write_way == 1'b0) && (write_bank == 2'b00)}} & write_wstrb) | ({4{reset}})
                   | ({4{cst == REFILL && (replace_way == 1'b0) && (refill_cnt == 2'b00) && ret_valid}});
@@ -538,16 +539,12 @@ always @(posedge clk) begin
         write_origin_data <= 32'b0;
     end
     else if (hitwrite) begin
-        need_write <= 1'b1;
         write_way <= way1_hit;
         write_bank <= reg_offset[3:2];
         write_index <= reg_index;
         write_wstrb <= reg_wstrb;
         write_wdata <= reg_wdata;
         write_origin_data <= way1_hit ? way1_load_word : way0_load_word;
-    end
-    else begin
-        need_write <= 1'b0;
     end
 end
 
