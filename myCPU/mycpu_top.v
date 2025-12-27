@@ -70,20 +70,26 @@ wire [31:0] data_sram_wdata;
 wire        data_sram_addr_ok;
 wire        data_sram_data_ok;
 wire [31:0] data_sram_rdata;
+
+wire        icache_rd_req;
+wire [ 2:0] icache_rd_type;
+wire [31:0] icache_rd_addr;
+wire        icache_rd_rdy;
+wire        icache_ret_valid;
+wire        icache_ret_last;
+wire [31:0] icache_ret_data;
 // connect cpu_axi_bridge
 cpu_axi_bridge u_cpu_axi_bridge(
     .clk                (aclk                ),
     .resetn             (aresetn             ),
-    // inst sram interface
-    .inst_req           (inst_sram_req      ),
-    .inst_wr            (inst_sram_wr       ),
-    .inst_size          (inst_sram_size     ),
-    .inst_wstrb         (inst_sram_wstrb    ),
-    .inst_addr          (inst_sram_addr     ),
-    .inst_wdata         (inst_sram_wdata    ),
-    .inst_addr_ok       (inst_sram_addr_ok  ),
-    .inst_data_ok       (inst_sram_data_ok  ),
-    .inst_rdata         (inst_sram_rdata    ),
+    // Icache Interface
+    .icache_rd_req      (icache_rd_req      ),
+    .icache_rd_type     (icache_rd_type     ),
+    .icache_rd_addr     (icache_rd_addr     ),
+    .icache_rd_rdy      (icache_rd_rdy      ),
+    .icache_ret_valid   (icache_ret_valid   ),
+    .icache_ret_last    (icache_ret_last    ),
+    .icache_ret_data    (icache_ret_data    ),
     // data sram interface
     .data_req           (data_sram_req      ),
     .data_wr            (data_sram_wr       ),
@@ -134,7 +140,6 @@ cpu_axi_bridge u_cpu_axi_bridge(
 );
 
 wire        reset;
-assign      reset = ~aresetn;
 
 wire        idAllowin;
 wire        ifValidout;
@@ -845,6 +850,33 @@ tlb #(
     .r_mat1         (tlb_r_mat1     ),
     .r_d1           (tlb_r_d1       ),
     .r_v1           (tlb_r_v1       )
+);
+
+cache Icache(
+    .clk            (aclk           ),
+    .resetn         (aresetn        ),
+    .rst            (reset          ),
+    // CPU Interface, 暂定
+    .valid          (inst_sram_req  ),
+    .op             (inst_sram_wr   ),
+    .uncached       (),
+    .index          (),
+    .tag            (),
+    .offset         (),
+    .wstrb          (inst_sram_wstrb),
+    .wdata          (inst_sram_wdata),
+    .addr_ok        (inst_sram_addr_ok),
+    .data_ok        (inst_sram_data_ok),
+    .rdata          (inst_sram_rdata),
+
+    // AXI Interface
+    .rd_req         (icache_rd_req  ),
+    .rd_type        (icache_rd_type ),
+    .rd_addr        (icache_rd_addr ),
+    .rd_rdy         (icache_rd_rdy  ),
+    .ret_valid      (icache_ret_valid),
+    .ret_last       (icache_ret_last),
+    .ret_data       (icache_ret_data)
 );
 
 endmodule

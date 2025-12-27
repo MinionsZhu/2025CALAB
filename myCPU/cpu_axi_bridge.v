@@ -1,16 +1,14 @@
 module cpu_axi_bridge(
     input       clk,
     input       resetn,
-    // CPU-Instruction SRAM Interface
-    input  wire        inst_req,
-    input  wire        inst_wr,
-    input  wire [ 1:0] inst_size,
-    input  wire [ 3:0] inst_wstrb,
-    input  wire [31:0] inst_addr,
-    input  wire [31:0] inst_wdata,
-    output wire        inst_addr_ok,
-    output wire        inst_data_ok,
-    output wire [31:0] inst_rdata,
+    // Icache Interface
+    input              icache_rd_req,
+    input   	[ 2:0] icache_rd_type,
+    input   	[31:0] icache_rd_addr,
+    output             icache_rd_rdy,		// addr_ok
+    output             icache_ret_valid,	// data_ok
+	output			   icache_ret_last,
+    output  	[31:0] icache_ret_data,
     // CPU-Data SRAM Interface
     input  wire        data_req,
     input  wire        data_wr,
@@ -25,8 +23,8 @@ module cpu_axi_bridge(
     // AR Channel
     output wire [ 3:0] arid,        // read request ID, 0 for instruction, 1 for data
     output wire [31:0] araddr,      // read address
-    output wire [ 7:0] arlen,       // currently fixed to 0
-    output wire [ 2:0] arsize,      // read size
+    output wire [ 7:0] arlen,       // uncached single transfer: fixed to 0; cached burst transfer: 16/4-1
+    output wire [ 2:0] arsize,      // read size, 
     output wire [ 1:0] arburst,     // currently fixed to 01 (INCR)
     output wire [ 1:0] arlock,      // currently fixed to 00 (normal access)
     output wire [ 3:0] arcache,     // currently fixed to 0000
@@ -64,6 +62,18 @@ module cpu_axi_bridge(
     input  wire        bvalid,     // write response valid, slave is providing valid write response
     output wire        bready      // write response ready, bridge is capable of receiving write response
 );
+// AXI 读请求类型 (rd_type)
+localparam  READ_BYTE       = 3'b000, // 1 Byte
+            READ_HALFWORD   = 3'b001, // 2 Bytes
+            READ_WORD       = 3'b010, // 4 Bytes
+            READ_BLOCK      = 3'b100; // 16 Bytes
+
+// AXI 写请求类型 (wr_type)
+localparam  WRITE_BYTE      = 3'b000, // 1 Byte
+            WRITE_HALFWORD  = 3'b001, // 2 Bytes
+            WRITE_WORD      = 3'b010, // 4 Bytes
+            WRITE_BLOCK     = 3'b100; // 16 Bytes
+
 wire reset;
 assign reset = ~resetn;
 
@@ -109,12 +119,11 @@ wire ar_block;
 wire r_data_req;
 wire r_inst_req;
 wire w_data_req;
-wire w_inst_req;
+//wire w_inst_req;
 
 assign r_data_req = data_req && ~data_wr;
-assign r_inst_req = inst_req && ~inst_wr;
+assign r_inst_req = icache_rd_req;
 assign w_data_req = data_req && data_wr;
-assign w_inst_req = inst_req && inst_wr;
 
 always @(posedge clk) begin
     if (reset) begin
@@ -185,12 +194,12 @@ always @(*) begin
             end
         end
         R_DATA: begin
-            if( (rvalid && rready && rid == DATA_ID) 
+            if( (rvalid && rready && rid == DATA_ID && rlast) 
               &&(arvalid && arready && ar_cur_state == AR_INST)
               ) begin
                 r_next_state = R_INST;
             end
-            else if (rvalid && rready && rid == DATA_ID) begin
+            else if (rvalid && rready && rid == DATA_ID && rlast) begin
                 r_next_state = R_IDLE;
             end
             else if(arvalid && arready && ar_cur_state == AR_INST) begin
@@ -201,12 +210,12 @@ always @(*) begin
             end
         end
         R_INST: begin
-            if( (rvalid && rready && rid == INST_ID) 
+            if( (rvalid && rready && rid == INST_ID && rlast) 
               &&(arvalid && arready && ar_cur_state == AR_DATA)
               ) begin
                 r_next_state = R_DATA;
             end
-            else if (rvalid && rready && rid == INST_ID) begin
+            else if (rvalid && rready && rid == INST_ID && rlast) begin
                 r_next_state = R_IDLE;
             end
             else if(arvalid && arready && ar_cur_state == AR_DATA) begin
@@ -217,10 +226,10 @@ always @(*) begin
             end
         end
         R_BOTH: begin
-            if (rvalid && rready && rid == INST_ID) begin
+            if (rvalid && rready && rid == INST_ID && rlast) begin
                 r_next_state = R_DATA;
             end
-            else if (rvalid && rready && rid == DATA_ID) begin
+            else if (rvalid && rready && rid == DATA_ID && rlast) begin
                 r_next_state = R_INST;
             end
             else begin
@@ -249,11 +258,11 @@ always @(posedge clk) begin
             inst_outstanding <= 1'b1;
         end
         // data read response received
-        if (rvalid && rready && rid == 4'd1) begin
+        if (rvalid && rready && rid == 4'd1 && rlast) begin
             data_outstanding <= 1'b0;
         end
         // inst read response received
-        if (rvalid && rready && rid == 4'd0) begin
+        if (rvalid && rready && rid == 4'd0 && rlast) begin
             inst_outstanding <= 1'b0;
         end
     end
@@ -351,6 +360,7 @@ assign ar_block = (data_addr == awaddr) && (aw_cur_state != AW_IDLE);
 reg [31:0] inst_addr_reg;
 reg [31:0] data_addr_reg;
 reg [ 2:0] arsize_reg;
+reg [ 7:0] arlen_reg;
 always @(posedge clk) begin
     if (reset) begin
         inst_addr_reg <= 32'b0;
@@ -359,8 +369,9 @@ always @(posedge clk) begin
     end
     else begin
         if (ar_cur_state == AR_IDLE && ar_next_state == AR_INST) begin
-            inst_addr_reg <= inst_addr;
-            arsize_reg    <= inst_size;
+            inst_addr_reg <= icache_rd_addr;
+            arsize_reg    <= 3'b010; // instruction read is always word-aligned
+            arlen_reg         <= icache_rd_type == READ_BLOCK ? 8'd3 : 8'd0; // block read or single read
         end
         if (ar_cur_state == AR_IDLE && ar_next_state == AR_DATA) begin
             data_addr_reg <= data_addr;
@@ -374,7 +385,7 @@ assign arid    = (ar_cur_state == AR_DATA) ? DATA_ID
 assign araddr  = (ar_cur_state == AR_DATA) ? data_addr_reg
                 :(ar_cur_state == AR_INST) ? inst_addr_reg
                 : 32'b0;
-assign arlen   = 8'b0;
+assign arlen   = arlen_reg;
 assign arsize  = arsize_reg;
 assign arburst = 2'b01;
 assign arlock  = 2'b00;
@@ -441,15 +452,16 @@ assign wlast  = 1'b1;
 assign bready = (b_cur_state == B_DATA);
 
 /* CPU interface signals */
-assign inst_addr_ok =  (ar_cur_state == AR_IDLE) && (ar_next_state == AR_INST);
+assign icache_rd_rdy =  (ar_cur_state == AR_IDLE) && (ar_next_state == AR_INST);
 
 assign data_addr_ok = ((ar_cur_state == AR_IDLE) && (ar_next_state == AR_DATA))
                     ||((aw_cur_state == AW_IDLE) && (aw_next_state == AW_DATA));
 
-assign inst_data_ok = (rvalid && rready && rid == INST_ID);
+assign icache_ret_valid = (rvalid && rready && rid == INST_ID);
 assign data_data_ok = (rvalid && rready && rid == DATA_ID)
                     ||(b_cur_state == B_DATA && b_next_state == B_IDLE);
 
-assign inst_rdata = (rvalid && rready && rid == INST_ID) ? rdata:rdata_inst_reg;
+assign icache_ret_data = (rvalid && rready && rid == INST_ID) ? rdata:rdata_inst_reg;
+assign icache_ret_last = rlast && (rvalid && rready && rid == INST_ID);
 assign data_rdata = (rvalid && rready && rid == DATA_ID) ? rdata:rdata_data_reg;
 endmodule
