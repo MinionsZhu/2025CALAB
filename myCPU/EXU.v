@@ -43,14 +43,16 @@ module EXU(
     output wire [31:0] EXU_to_IDU_forward,
     output wire        EXU_current_is_ld,
 
-    // data sram interface
-    output wire        data_sram_req,
-    output wire        data_sram_wr,
-    output wire [ 1:0] data_sram_size,
-    output wire [ 3:0] data_sram_wstrb,
-    output wire [31:0] data_sram_addr,
-    output wire [31:0] data_sram_wdata,
-    input  wire        data_sram_addr_ok,
+    // dcache interface
+    output wire        dcache_valid,
+    output wire        dcache_op,
+    output wire        dcache_uncached,
+    output wire [ 7:0] dcache_index,
+    output wire [19:0] dcache_tag,
+    output wire [ 3:0] dcache_offset,
+    output wire [ 3:0] dcache_wstrb,
+    output wire [31:0] dcache_wdata,
+    input  wire        dcache_addr_ok,
 
     // TLB search interface (for Load/Store/tlbsrch instructions)
     output wire [18:0] s1_vppn,
@@ -415,6 +417,7 @@ wire pis_ex;
 wire pme_ex;
 wire ppi_ex;
 wire addr_ex;
+wire [31:0] dcache_addr;
 
 assign dat = csr_crmd_da && !csr_crmd_pg;
 assign pat = csr_crmd_pg && !csr_crmd_da;
@@ -442,9 +445,9 @@ assign ppi_ex = use_tlb && s1_found && s1_v && (csr_crmd_plv > s1_plv);
 assign addr_ex = tlbr_ex || pil_ex || pis_ex || pme_ex || ppi_ex || newecode==`ECODE_PIF;
 
 assign is_sram_inst = (|res_from_mem || |mem_we) && exValidReg && !isale && !exception && !refetch;
-assign data_sram_req = is_sram_inst && memAllowin && !memStopMemAccess && !wb_ex && !ertn_flush && !addr_ex;
-assign data_sram_wr  = |mem_we;
-assign data_sram_wstrb = (~exValidReg || wb_ex || isale) ? 4'b0 :
+assign dcache_valid = is_sram_inst && memAllowin && !memStopMemAccess && !wb_ex && !ertn_flush && !addr_ex;
+assign dcache_op    = |mem_we;
+assign dcache_wstrb = (~exValidReg || wb_ex || isale) ? 4'b0 :
                     mem_we[2] ? 4'b1111 :
                     mem_we[1] ? (mem_offsets[1]       ? 4'b1100 : 4'b0011):
                     mem_we[0] ? (mem_offsets == 2'b00 ? 4'b0001 :
@@ -455,15 +458,18 @@ assign data_sram_wstrb = (~exValidReg || wb_ex || isale) ? 4'b0 :
 assign is_sram_w = mem_we[2] || res_from_mem[4];
 assign is_sram_h = mem_we[1] || res_from_mem[3] || res_from_mem[1];
 assign is_sram_b = mem_we[0] || res_from_mem[2] || res_from_mem[0];
-assign data_sram_size = is_sram_w ? 2'b10 :
-                        is_sram_h ? 2'b01 :
-                        is_sram_b ? 2'b00 : 2'b10;
-assign data_sram_addr = is_sram_w ? { addr_phy[31:2], 2'b00 } :
+assign dcache_addr    = is_sram_w ? { addr_phy[31:2], 2'b00 } :
                         is_sram_h ? { addr_phy[31:1], 1'b0  } :
                         is_sram_b ? { addr_phy[31:0]        } :  32'b0;
-assign data_sram_wdata = mem_we[2] ?    rkd_value :
+assign {dcache_tag, dcache_index, dcache_offset} = dcache_addr[31:0];
+assign dcache_wdata   = mem_we[2] ?    rkd_value :
                             mem_we[1] ? {2{rkd_value[15:0]}} :
                             mem_we[0] ? {4{rkd_value[ 7:0]}} : 32'b0;
+assign dcache_uncached = (dat) ? (csr_crmd_datm == 2'b00) :
+                         (pat) ? ((dmw0_hit) ? (csr_dmw0_mat == 2'b00) :
+                                  (dmw1_hit) ? (csr_dmw1_mat == 2'b00) :
+                                  (s1_mat == 2'b00)) : 
+                                1'b0; // should not happen
 
 // ALE exception
 assign isale  = (~(alu_result[1:0] == 2'b0) & (mem_we[2] | res_from_mem[4]))|    // word-aligned check
@@ -514,7 +520,7 @@ always @(posedge clk) begin
     end
 end
 assign exReadygo  =  use_div        ? (signed_div_dout_valid | unsigned_div_dout_valid) :
-                     is_sram_inst   ? (data_sram_addr_ok && data_sram_req || exception || addr_ex) : 
+                     is_sram_inst   ? (dcache_addr_ok && dcache_valid || exception || addr_ex) : 
                      tlb_stall      ? 1'b0 : 1'b1;
 assign exValidout =  exValidReg &&  exReadygo;
 assign exAllowin  = !exValidReg || (exReadygo && memAllowin);
