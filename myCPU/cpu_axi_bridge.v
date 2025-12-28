@@ -487,4 +487,5 @@ assign dcache_ret_valid = (rvalid && rready && rid == DATA_ID);
 assign icache_ret_data = (rvalid && rready && rid == INST_ID) ? rdata:rdata_inst_reg;
 assign icache_ret_last = rlast && (rvalid && rready && rid == INST_ID);
 assign dcache_ret_data = (rvalid && rready && rid == DATA_ID) ? rdata:rdata_data_reg;
+assign dcache_ret_last = rlast && (rvalid && rready && rid == DATA_ID);
 endmodule
