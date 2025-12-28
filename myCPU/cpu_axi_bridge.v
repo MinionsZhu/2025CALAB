@@ -9,16 +9,21 @@ module cpu_axi_bridge(
     output             icache_ret_valid,	// data_ok
 	output			   icache_ret_last,
     output  	[31:0] icache_ret_data,
-    // CPU-Data SRAM Interface
-    input  wire        data_req,
-    input  wire        data_wr,
-    input  wire [ 1:0] data_size,
-    input  wire [ 3:0] data_wstrb,
-    input  wire [31:0] data_addr,
-    input  wire [31:0] data_wdata,
-    output wire        data_addr_ok,
-    output wire        data_data_ok,
-    output wire [31:0] data_rdata,
+    // Dcache Interface
+    input              dcache_rd_req,
+    input              dcache_rd_type,
+    input   	[31:0] dcache_rd_addr,
+    output             dcache_rd_rdy,		// addr_ok
+    output             dcache_ret_valid,	// data_ok
+    output			   dcache_ret_last,
+    output  	[31:0] dcache_ret_data,
+
+    input              dcache_wr_req,
+    input       [ 2:0] dcache_wr_type,
+    input   	[31:0] dcache_wr_addr,
+    input   	[ 3:0] dcache_wr_wstrb,
+    input      [127:0] dcache_wr_wdata,
+    output             dcache_wr_rdy,		// addr_ok
     // AXI Interface
     // AR Channel
     output wire [ 3:0] arid,        // read request ID, 0 for instruction, 1 for data
@@ -35,7 +40,7 @@ module cpu_axi_bridge(
     input  wire [ 3:0] rid,         // read ID, should be same as arid
     input  wire [31:0] rdata,       // read data
     input  wire [ 1:0] rresp,       // ignored
-    input  wire        rlast,       // ignored
+    input  wire        rlast,       // last transfer in a read burst
     input  wire        rvalid,      // read valid, slave is providing valid read data
     output wire        rready,      // read ready, bridge is capable of receiving data
     // AW Channel
@@ -121,9 +126,9 @@ wire r_inst_req;
 wire w_data_req;
 //wire w_inst_req;
 
-assign r_data_req = data_req && ~data_wr;
+assign r_data_req = dcache_rd_req;
 assign r_inst_req = icache_rd_req;
-assign w_data_req = data_req && data_wr;
+assign w_data_req = dcache_wr_req;
 
 always @(posedge clk) begin
     if (reset) begin
@@ -297,7 +302,7 @@ always @(*) begin
             end
         end
         W_DATA: begin
-            if (wvalid && wready) begin
+            if (wvalid && wready && wlast) begin
                 aw_next_state = W_WAIT;
             end
             else begin
@@ -331,7 +336,7 @@ end
 always @(*) begin
     case (b_cur_state)
         B_IDLE: begin
-            if (aw_cur_state == W_DATA && wvalid && wready) begin
+            if (aw_cur_state == W_DATA && wvalid && wready && wlast) begin
                 b_next_state = B_DATA;
             end
             else begin
@@ -356,7 +361,8 @@ end
 /* AXI ar channel signals */
 // cpu will not issue a data read request when there is an outstanding write request
 // thus if aw_cur_state == AW_IDLE, there will be no conflict of insuing read and write requests at the same time
-assign ar_block = (data_addr == awaddr) && (aw_cur_state != AW_IDLE);
+// !!! 可能有问题 !!!
+assign ar_block = (dcache_rd_addr <= awaddr + wrburst_upbd) && (dcache_rd_addr >= awaddr) && (aw_cur_state != AW_IDLE);
 reg [31:0] inst_addr_reg;
 reg [31:0] data_addr_reg;
 reg [ 2:0] arsize_reg;
@@ -371,11 +377,12 @@ always @(posedge clk) begin
         if (ar_cur_state == AR_IDLE && ar_next_state == AR_INST) begin
             inst_addr_reg <= icache_rd_addr;
             arsize_reg    <= 3'b010; // instruction read is always word-aligned
-            arlen_reg         <= icache_rd_type == READ_BLOCK ? 8'd3 : 8'd0; // block read or single read
+            arlen_reg     <= icache_rd_type == READ_BLOCK ? 8'd3 : 8'd0; // block read or single read
         end
         if (ar_cur_state == AR_IDLE && ar_next_state == AR_DATA) begin
-            data_addr_reg <= data_addr;
-            arsize_reg    <= data_size;
+            data_addr_reg <= dcache_rd_addr;
+            arsize_reg    <= 3'b010; // default word-aligned
+            arlen_reg     <= dcache_rd_type == READ_BLOCK ? 8'd3 : 8'd0; // block read or single read
         end
     end
 end
@@ -415,27 +422,45 @@ assign rready = (r_cur_state == R_DATA) || (r_cur_state == R_INST) || (r_cur_sta
 /* AXI aw channel signals */
 reg [31:0] awaddr_reg;
 reg [ 2:0] data_size_reg;
-reg [31:0] wdata_reg;
+reg [127:0] wdata_reg;
 reg [ 3:0] wstrb_reg;
+reg [1:0] wbeat_count;
+reg [3:0] wburst_upbd;
+reg [7:0] awlen_reg;
 always @(posedge clk) begin
     if (reset) begin
         awaddr_reg    <= 32'b0;
-        wdata_reg     <= 32'b0;
+        awlen_reg     <= 8'b0;
+        wdata_reg     <= 128'b0;
         wstrb_reg     <= 4'b0;
         data_size_reg <= 3'b0;
+        wbeat_count   <= 2'b0;
+        wburst_upbd  <= 4'b0;
     end
     else begin
         if (aw_cur_state == AW_IDLE && aw_next_state == AW_DATA) begin
-            awaddr_reg    <= data_addr;
-            wdata_reg     <= data_wdata;
-            wstrb_reg     <= data_wstrb;
-            data_size_reg <= data_size;
+            awaddr_reg    <= dcache_wr_addr;
+            awlen_reg     <= dcache_wr_type == WRITE_BLOCK ? 8'd3 : 8'd0; // block write or single write
+            wdata_reg     <= dcache_wr_wdata;
+            wstrb_reg     <= dcache_wr_wstrb;
+            data_size_reg <= 3'b010; // default word-aligned
+            wbeat_count   <= dcache_wr_type == WRITE_BLOCK ? 2'd3 : 2'd0; // block write or single write
+            wburst_upbd   <= (dcache_wr_type == WRITE_BYTE) ? 4'd0
+                           : (dcache_wr_type == WRITE_HALFWORD) ? 4'd1 
+                           : (dcache_wr_type == WRITE_WORD) ? 4'd3 
+                           : (dcache_wr_type == WRITE_BLOCK) ? 4'd15 
+                           : 4'd0;
+        end
+        else if(aw_cur_state == W_DATA && wready && wvalid && !wlast) begin
+            // in case of burst write, update wdata and wbeat_count for next beat
+            wdata_reg <= {32'b0, wdata_reg[127:32]};
+            wbeat_count <= wbeat_count - 1'b1;
         end
     end
 end
 assign awid    = DATA_ID;
 assign awaddr  = awaddr_reg;
-assign awlen   = 8'b0;
+assign awlen   = awlen_reg;
 assign awsize  = {1'b0, data_size_reg};
 assign awburst = 2'b01;
 assign awlock  = 2'b00;
@@ -444,24 +469,23 @@ assign awprot  = 3'b000;
 assign awvalid = (aw_cur_state == AW_DATA);
 /* AXI w channel signals */
 assign wid    = DATA_ID;
-assign wdata  = wdata_reg;
+assign wdata  = wdata_reg[31:0];
 assign wstrb  = wstrb_reg;
 assign wvalid = (aw_cur_state == W_DATA);
-assign wlast  = 1'b1;
+assign wlast  = wbeat_count == 2'b0 && wvalid;
 /* AXI b channel signals */
 assign bready = (b_cur_state == B_DATA);
 
 /* CPU interface signals */
 assign icache_rd_rdy =  (ar_cur_state == AR_IDLE) && (ar_next_state == AR_INST);
-
-assign data_addr_ok = ((ar_cur_state == AR_IDLE) && (ar_next_state == AR_DATA))
-                    ||((aw_cur_state == AW_IDLE) && (aw_next_state == AW_DATA));
+assign dcache_rd_rdy =  (ar_cur_state == AR_IDLE) && (ar_next_state == AR_DATA);
+assign dcache_wr_rdy =  (aw_cur_state == AW_IDLE) && (aw_next_state == AW_DATA);
 
 assign icache_ret_valid = (rvalid && rready && rid == INST_ID);
-assign data_data_ok = (rvalid && rready && rid == DATA_ID)
-                    ||(b_cur_state == B_DATA && b_next_state == B_IDLE);
+assign dcache_ret_valid = (rvalid && rready && rid == DATA_ID);
 
 assign icache_ret_data = (rvalid && rready && rid == INST_ID) ? rdata:rdata_inst_reg;
 assign icache_ret_last = rlast && (rvalid && rready && rid == INST_ID);
-assign data_rdata = (rvalid && rready && rid == DATA_ID) ? rdata:rdata_data_reg;
+assign dcache_ret_data = (rvalid && rready && rid == DATA_ID) ? rdata:rdata_data_reg;
+assign dcache_ret_last = rlast && (rvalid && rready && rid == DATA_ID);
 endmodule
