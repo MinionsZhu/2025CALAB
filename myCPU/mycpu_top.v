@@ -50,16 +50,6 @@ module mycpu_top(
     output wire [ 4:0] debug_wb_rf_wnum,
     output wire [31:0] debug_wb_rf_wdata
 );
-// data sram interface
-wire        data_sram_req;
-wire        data_sram_wr;
-wire [ 1:0] data_sram_size;
-wire [ 3:0] data_sram_wstrb;
-wire [31:0] data_sram_addr;
-wire [31:0] data_sram_wdata;
-wire        data_sram_addr_ok;
-wire        data_sram_data_ok;
-wire [31:0] data_sram_rdata;
 
 wire        icache_rd_req;
 wire [ 2:0] icache_rd_type;
@@ -68,6 +58,20 @@ wire        icache_rd_rdy;
 wire        icache_ret_valid;
 wire        icache_ret_last;
 wire [31:0] icache_ret_data;
+
+wire        dcache_rd_req;
+wire [ 2:0] dcache_rd_type;
+wire [31:0] dcache_rd_addr;
+wire        dcache_rd_rdy;
+wire        dcache_ret_valid;
+wire        dcache_ret_last;
+wire [31:0] dcache_ret_data;
+wire        dcache_wr_req;
+wire [ 2:0] dcache_wr_type;
+wire [31:0] dcache_wr_addr;
+wire [ 3:0] dcache_wr_wstrb;
+wire [127:0] dcache_wr_wdata;
+wire        dcache_wr_rdy;
 // connect cpu_axi_bridge
 cpu_axi_bridge u_cpu_axi_bridge(
     .clk                (aclk                ),
@@ -80,16 +84,20 @@ cpu_axi_bridge u_cpu_axi_bridge(
     .icache_ret_valid   (icache_ret_valid   ),
     .icache_ret_last    (icache_ret_last    ),
     .icache_ret_data    (icache_ret_data    ),
-    // data sram interface
-    .data_req           (data_sram_req      ),
-    .data_wr            (data_sram_wr       ),
-    .data_size          (data_sram_size     ),
-    .data_wstrb         (data_sram_wstrb    ),
-    .data_addr          (data_sram_addr     ),
-    .data_wdata         (data_sram_wdata    ),
-    .data_addr_ok       (data_sram_addr_ok  ),
-    .data_data_ok       (data_sram_data_ok  ),
-    .data_rdata         (data_sram_rdata    ),
+    // Dcache interface
+    .dcache_rd_req      (dcache_rd_req      ),
+    .dcache_rd_type     (dcache_rd_type     ),
+    .dcache_rd_addr     (dcache_rd_addr     ),
+    .dcache_rd_rdy      (dcache_rd_rdy      ),
+    .dcache_ret_valid   (dcache_ret_valid   ),
+    .dcache_ret_last    (dcache_ret_last    ),
+    .dcache_ret_data    (dcache_ret_data    ),
+    .dcache_wr_req      (dcache_wr_req      ),
+    .dcache_wr_type     (dcache_wr_type     ),
+    .dcache_wr_addr     (dcache_wr_addr     ),
+    .dcache_wr_wstrb    (dcache_wr_wstrb    ),
+    .dcache_wr_wdata    (dcache_wr_wdata    ),
+    .dcache_wr_rdy      (dcache_wr_rdy      ),
     // AXI interface
     .arid               (arid               ),
     .araddr             (araddr             ),
@@ -309,7 +317,6 @@ wire [31:0] dcache_wdata;
 wire        dcache_addr_ok;
 wire        dcache_data_ok;
 wire [31:0] dcache_rdata;
-assign      dcache_rst = 1'b0;  // temperary assign
 
 // reset for cpu core
 wire        reset_core;
@@ -348,6 +355,38 @@ cache u_icache(
     .wr_wstrb       (               ), // not used
     .wr_data        (               ), // not used
     .wr_rdy         (1'b1           )  // not used
+);
+
+cache u_dcache(
+    .clk            (aclk           ),
+    .resetn         (aresetn        ),
+    .rst            (dcache_rst     ),
+    // dcache interface
+    .valid          (dcache_valid   ),
+    .op             (dcache_op      ),
+    .uncached       (dcache_uncached),
+    .index          (dcache_index   ),
+    .tag            (dcache_tag     ),
+    .offset         (dcache_offset  ),
+    .wstrb          (dcache_wstrb   ),
+    .wdata          (dcache_wdata   ),
+    .addr_ok        (dcache_addr_ok ),
+    .data_ok        (dcache_data_ok ),
+    .rdata          (dcache_rdata   ),
+    // AXI interface
+    .rd_req         (dcache_rd_req  ),
+    .rd_type        (dcache_rd_type ),
+    .rd_addr        (dcache_rd_addr ),
+    .rd_rdy         (dcache_rd_rdy  ),
+    .ret_valid      (dcache_ret_valid),
+    .ret_last       (dcache_ret_last),
+    .ret_data       (dcache_ret_data),
+    .wr_req         (dcache_wr_req  ),
+    .wr_type        (dcache_wr_type ),
+    .wr_addr        (dcache_wr_addr ),
+    .wr_wstrb       (dcache_wr_wstrb),
+    .wr_data        (dcache_wr_wdata),
+    .wr_rdy         (dcache_wr_rdy  )
 );
 
 IFU u_IFU(
@@ -566,14 +605,16 @@ EXU u_EXU(
     .EXU_to_IDU_valid       (EXU_to_IDU_valid   ),
     .EXU_to_IDU_forward     (EXU_to_IDU_forward ),
     .EXU_current_is_ld      (EXU_current_is_ld  ),
-    // data sram interface
-    .data_sram_req          (data_sram_req      ),
-    .data_sram_wr           (data_sram_wr       ),
-    .data_sram_size         (data_sram_size     ),
-    .data_sram_wstrb        (data_sram_wstrb    ),
-    .data_sram_addr         (data_sram_addr     ), 
-    .data_sram_wdata        (data_sram_wdata    ),
-    .data_sram_addr_ok      (data_sram_addr_ok  ),
+    // dcache interface
+    .dcache_valid           (dcache_valid       ),
+    .dcache_op              (dcache_op          ),
+    .dcache_uncached        (dcache_uncached    ),
+    .dcache_index           (dcache_index       ),
+    .dcache_tag             (dcache_tag         ),
+    .dcache_offset          (dcache_offset      ),
+    .dcache_wstrb           (dcache_wstrb       ),
+    .dcache_wdata           (dcache_wdata       ),
+    .dcache_addr_ok         (dcache_addr_ok     ),
     // TLB search interface (for Load/Store/tlbsrch instructions)
     .s1_vppn                (s1_vppn            ),
     .s1_va_bit12            (s1_va_bit12        ),
@@ -648,9 +689,9 @@ MEMU u_MEMU(
     .ex2memTLBBus           (ex2memTLBBus       ),
     // to EXU
     .memStopMemAccess       (memStopMemAccess   ),
-    // data sram interface
-    .data_sram_rdata        (data_sram_rdata    ),
-    .data_sram_data_ok      (data_sram_data_ok  ),
+    // dcache interface
+    .dcache_data_ok         (dcache_data_ok     ),
+    .dcache_rdata           (dcache_rdata       ),
     // to IDU   
     .MEM_to_IDU_csr         (MEM_to_IDU_csr     ),
     .MEM_to_IDU_gr_we       (MEM_to_IDU_gr_we   ),

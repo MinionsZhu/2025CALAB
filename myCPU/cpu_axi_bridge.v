@@ -11,7 +11,7 @@ module cpu_axi_bridge(
     output  	[31:0] icache_ret_data,
     // Dcache Interface
     input              dcache_rd_req,
-    input              dcache_rd_type,
+    input       [ 2:0] dcache_rd_type,
     input   	[31:0] dcache_rd_addr,
     output             dcache_rd_rdy,		// addr_ok
     output             dcache_ret_valid,	// data_ok
@@ -362,7 +362,7 @@ end
 // cpu will not issue a data read request when there is an outstanding write request
 // thus if aw_cur_state == AW_IDLE, there will be no conflict of insuing read and write requests at the same time
 // !!! 可能有问题 !!!
-assign ar_block = (dcache_rd_addr <= awaddr + wrburst_upbd) && (dcache_rd_addr >= awaddr) && (aw_cur_state != AW_IDLE);
+assign ar_block = (dcache_rd_addr <= awaddr_reg + wburst_upbd) && (dcache_rd_addr >= awaddr) && (aw_cur_state != AW_IDLE);
 reg [31:0] inst_addr_reg;
 reg [31:0] data_addr_reg;
 reg [ 2:0] arsize_reg;
@@ -478,8 +478,8 @@ assign bready = (b_cur_state == B_DATA);
 
 /* CPU interface signals */
 assign icache_rd_rdy =  (ar_cur_state == AR_IDLE) && (ar_next_state == AR_INST);
-assign dcache_rd_rdy =  (ar_cur_state == AR_IDLE) && (ar_next_state == AR_DATA);
-assign dcache_wr_rdy =  (aw_cur_state == AW_IDLE) && (aw_next_state == AW_DATA);
+assign dcache_rd_rdy =  (ar_cur_state == AR_IDLE) && !(ar_block) && !data_outstanding;
+assign dcache_wr_rdy =  (aw_cur_state == AW_IDLE);
 
 assign icache_ret_valid = (rvalid && rready && rid == INST_ID);
 assign dcache_ret_valid = (rvalid && rready && rid == DATA_ID);

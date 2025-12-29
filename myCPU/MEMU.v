@@ -26,10 +26,9 @@ module MEMU(
     // data to EXU
     output wire        memStopMemAccess,
 
-    // data from data sram
-    input  wire [31:0] data_sram_rdata,
-    input  wire        data_sram_data_ok,
-
+    // data from dcache
+    input  wire [31:0] dcache_rdata,
+    input  wire        dcache_data_ok,
     // to IDU
     output wire        MEM_to_IDU_csr,
     output wire        MEM_to_IDU_gr_we,
@@ -176,10 +175,10 @@ assign ex_result    = ex_result_reg;
 assign signals_pass = signals_pass_reg;
 assign {is_sram_inst, res_from_mem, mem_offsets, gr_we, dest} = signals_pass;
 
-assign shift_rdata = mem_offsets == 2'b00 ?         data_sram_rdata :
-                     mem_offsets == 2'b01 ? { 8'b0, data_sram_rdata[31: 8]}:
-                     mem_offsets == 2'b10 ? {16'b0, data_sram_rdata[31:16]}:
-                                            {24'b0, data_sram_rdata[31:24]};
+assign shift_rdata = mem_offsets == 2'b00 ?         dcache_rdata        :
+                     mem_offsets == 2'b01 ? { 8'b0, dcache_rdata[31: 8]}:
+                     mem_offsets == 2'b10 ? {16'b0, dcache_rdata[31:16]}:
+                                            {24'b0, dcache_rdata[31:24]};
 
 assign mem_result[ 7: 0] = shift_rdata[ 7: 0];
 
@@ -226,7 +225,7 @@ end
 wire ecodeForReadygo;
 assign ecodeForReadygo = ecode==`ECODE_TLBR || ecode==`ECODE_PIL || ecode==`ECODE_PIF || ecode==`ECODE_PIS || ecode==`ECODE_PME || ecode==`ECODE_PPI;
 
-assign memReadygo  =  is_sram_inst ? (data_sram_data_ok || (exception && ecodeForReadygo)) : 1'b1;
+assign memReadygo  =  is_sram_inst ? (dcache_data_ok || (exception && ecodeForReadygo)) : 1'b1;
 assign memValidout =  memValidReg &&  memReadygo;
 assign memAllowin  = (!memValidReg || (memReadygo && wbAllowin));
 
