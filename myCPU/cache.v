@@ -275,7 +275,7 @@ assign refill_word = (refill_cnt == reg_offset[3:2] && reg_op == WRITE) ? mixed_
 
 
 assign addr_ok = (cst == IDLE) || (cst == LOOKUP && cache_hit && ~hitwrite_conflict);    // 数据、地址均已被接收
-assign data_ok = (cst == LOOKUP && cache_hit) || (cst == REFILL && ret_valid && ((refill_cnt == reg_offset[3:2]) || (reg_uncached && ret_last))); // 数据返回完成
+assign data_ok = (cst == LOOKUP && (cache_hit || reg_op == WRITE)) || (cst == REFILL && ret_valid && ((refill_cnt == reg_offset[3:2]) || (reg_uncached && ret_last))); // 数据返回完成
 assign rdata = load_res;
 
 // 仅在 REPLACE 状态发起读请求；如果是非缓存访问，对于 store 操作则不发起读请求
@@ -456,18 +456,6 @@ end
 
 always @(posedge clk) begin
     if (reset) begin
-        reg_uncached <= 1'b0;
-    end
-    else if (uncached) begin
-        reg_uncached <= 1'b1;
-    end
-    else if (nst == IDLE) begin // 新请求到来，重置 uncached 信号
-        reg_uncached <= 1'b0;
-    end
-end
-
-always @(posedge clk) begin
-    if (reset) begin
         dirty_way0 <= 256'b0;
         dirty_way1 <= 256'b0;
     end
@@ -530,6 +518,7 @@ always @(posedge clk) begin
         reg_offset <= 4'b0;
         reg_wstrb <= 4'b0;
         reg_wdata <= 32'b0;
+        reg_uncached <= 1'b0;
     end
     else if (addr_ok && valid) begin
         reg_op <= op;
@@ -538,6 +527,7 @@ always @(posedge clk) begin
         reg_offset <= offset;
         reg_wstrb <= wstrb;
         reg_wdata <= wdata;
+        reg_uncached <= uncached;
     end
 end
 
