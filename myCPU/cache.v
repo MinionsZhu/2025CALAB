@@ -7,9 +7,11 @@ module cache(
     input               valid,      // 请求有效
     input               op,         // 1: write, 0: read
     input               uncached,   // 1: 不缓存访问，直接通过cache访问内存
+    input               cacop,      // 1: cacop 指令访问。需要保证 valid=1（保证采样正常触发）且 uncached=0
+    input    [ 1:0]     code,       // cacop 指令操作码，高2位：0：cache初始化；1：地址直接索引模式，维护一致性；2：查询索引模式，维护一致性。低3位(不再保留)：0：icache；1：dcache；2：icache+dcache
     input    [ 7:0]     index,
     input    [19:0]     tag,        // 经虚实地址转换后的物理地址高位，来自组合逻辑
-    input    [ 3:0]     offset,
+    input    [ 3:0]     offset,     // cacop 时直接将算出的 VA 按格式切分即可
     input    [ 3:0]     wstrb,
     input    [31:0]     wdata,
     output              addr_ok,    // Read: 地址已被接收；Write: 地址和数据均被接收
@@ -88,8 +90,8 @@ wire        d_w0_b0_en, d_w0_b1_en, d_w0_b2_en, d_w0_b3_en,
 wire [ 3:0] d_w0_b0_we, d_w0_b1_we, d_w0_b2_we, d_w0_b3_we,
             d_w1_b0_we, d_w1_b1_we, d_w1_b2_we, d_w1_b3_we;
 
-reg [255:0] dirty_way0;
-reg [255:0] dirty_way1;
+reg [255:0] dirty_way [1:0];    // 2个way，每个way 256行，每行1bit脏位
+
 tagv_ram tagv_way0(
     .addra(tv_addr),
     .clka(clk),
@@ -185,8 +187,6 @@ localparam      WB_IDLE   = 1'b0,
                 WB_WRITE  = 1'b1;
 reg             wb_cst, wb_nst;
 
-reg             reg_uncached;   // 暂存 uncached 信号，防止 refill 过程中被覆盖
-
 // Request Buffer
 reg             reg_op;
 reg    [ 7:0]   reg_index;
@@ -194,6 +194,9 @@ reg    [19:0]   reg_tag;
 reg    [ 3:0]   reg_offset;
 reg    [ 3:0]   reg_wstrb;
 reg    [31:0]   reg_wdata;
+reg             reg_uncached;   // 暂存 uncached 信号，防止 refill 过程中被覆盖
+reg             reg_cacop;      // 暂存 cacop 信号
+reg    [ 1:0]   reg_code;       // 暂存 cacop 指令操作码
 
 // Miss Buffer
 reg             replace_way;    // 缺失Cache行准备要替换的 way
@@ -226,13 +229,18 @@ wire            replaceIsdirty;
 wire            hitwrite;
 wire            need_write;
 wire   [31:0]   hitwrite_mask;
-wire            hitwrite_conflict1; // 可以前递 TODO: 目前先按照阻塞实现
+wire            hitwrite_conflict1; // 可以前递，目前先按照阻塞实现
 wire            hitwrite_conflict2; // 只能阻塞
 wire            hitwrite_conflict;
 wire            en_lookup;  // lookup 操作的片选信号
 
+// 重填数据处理
 wire   [31:0]   refill_word;
 wire   [31:0]   mixed_word;
+
+// cacop 相关
+wire            cacopisdirty;   // cacop 指令查询结果，脏则为 1
+wire            cacop_way;
 
 // 命中判断
 assign {way0_tag, way0_v} = tv_w0_rdata;
@@ -252,8 +260,10 @@ assign load_res = (cst == REFILL) ? ret_data :
                    way1_hit ? way1_load_word : way0_load_word;
 assign replace_data = replace_way ? way1_data : way0_data;
 
-assign replaceIsdirty = replace_way ? dirty_way1[reg_index] && way1_v : dirty_way0[reg_index] && way0_v;
+// 替换块脏位判断
+assign replaceIsdirty = replace_way ? dirty_way[1][reg_index] && way1_v : dirty_way[0][reg_index] && way0_v;
 
+// Hit Write 相关
 assign hitwrite = (cst == LOOKUP) && cache_hit & (reg_op == WRITE);
 assign need_write = (wb_cst == WB_WRITE);
 assign hitwrite_conflict1 = (cst == LOOKUP)     // 主状态机处于 LOOKUP 状态
@@ -265,8 +275,19 @@ assign hitwrite_conflict2 = (wb_cst == WRITE)   // Write Buffer 状态机处于 
                 && (op == READ && valid)        // 此时流水线发来一个新的 Load 类的 Cache 访问请求
                 && (offset[3:2] == write_bank); // 并且该 Load 请求与 Write Buffer 里的待写请求的地址重叠。“地址重叠”是指 Load 请求地址的[3:2]与 Store 请求地址的[3:2]相等。
 assign hitwrite_conflict = hitwrite_conflict1 || hitwrite_conflict2;    // conflict 显然不会出现在非缓存访问中
+// lookup 片选信号
 assign en_lookup = (cst == IDLE || cst == LOOKUP) && valid && ~hitwrite_conflict;
 
+// cacop 相关
+assign cacopisdirty = ~reg_cacop ? 1'b0 :
+                      (reg_code == 2'd1) ? dirty_way[reg_offset[0]][reg_index] :
+                      (reg_code == 2'd2) ? (way1_hit ? dirty_way[1][reg_index] :
+                                            way0_hit ? dirty_way[0][reg_index] :
+                                            1'b0) : 1'b0;
+assign cacop_way = reg_code == 2'd1 || reg_code == 2'd0 ? reg_offset[0] :
+                   reg_code == 2'd2 ? way1_hit : 1'b0;
+
+// 重填数据处理
 assign mixed_word = {reg_wstrb[3] ? reg_wdata[31:24] : ret_data[31:24],
                      reg_wstrb[2] ? reg_wdata[23:16] : ret_data[23:16],
                      reg_wstrb[1] ? reg_wdata[15: 8] : ret_data[15: 8],
@@ -274,17 +295,20 @@ assign mixed_word = {reg_wstrb[3] ? reg_wdata[31:24] : ret_data[31:24],
 assign refill_word = (refill_cnt == reg_offset[3:2] && reg_op == WRITE) ? mixed_word : ret_data;
 
 
+// 与 CPU 接口信号
 assign addr_ok = (cst == IDLE) || (cst == LOOKUP && cache_hit && ~hitwrite_conflict);    // 数据、地址均已被接收
-assign data_ok = (cst == LOOKUP && (cache_hit || reg_op == WRITE)) || (cst == REFILL && ret_valid && ((refill_cnt == reg_offset[3:2]) || (reg_uncached && ret_last))); // 数据返回完成
+assign data_ok = (cst == LOOKUP && ((cache_hit && ~reg_cacop) || reg_op == WRITE || (reg_cacop && nst == IDLE))) ||
+                 (cst == REFILL && (reg_cacop || (ret_valid && ((refill_cnt == reg_offset[3:2]) || (reg_uncached && ret_last))))); // 数据返回完成
 assign rdata = load_res;
 
-// 仅在 REPLACE 状态发起读请求；如果是非缓存访问，对于 store 操作则不发起读请求
-assign rd_req = (cst == REPLACE) && ~(reg_uncached && (reg_op == WRITE));
+// 仅在 REPLACE 状态发起读请求；如果是非缓存访问，对于 store 操作则不发起读请求；对于 cacop 指令也不发起读请求
+assign rd_req = (cst == REPLACE) && ~(reg_uncached && (reg_op == WRITE)) && ~reg_cacop;
 assign rd_type = reg_uncached ? READ_WORD : READ_BLOCK; // 非缓存访问读 4 字节
 assign rd_addr = reg_uncached ? {reg_tag, reg_index, reg_offset[3:2], 2'b00} : {reg_tag, reg_index, 4'b0000};
 
 // 仅在 REPLACE 状态且替换块为脏块时发起写请求；如果是非缓存访问，对于 load 操作则不发起写请求
-assign wr_req = (cst == REPLACE) && (reg_uncached ? reg_op == WRITE : replaceIsdirty);
+assign wr_req = (cst == REPLACE) && (reg_uncached ? reg_op == WRITE :
+                                     reg_cacop ? cacopisdirty : replaceIsdirty);
 assign wr_type = reg_uncached ? WRITE_WORD : WRITE_BLOCK; // 非缓存访问写 4 字节
 assign wr_addr = reg_uncached ? {reg_tag, reg_index, reg_offset[3:2], 2'b00} : {replace_way ? way1_tag : way0_tag, reg_index, 4'b0000};
 assign wr_wstrb = reg_wstrb; // 非缓存访问时，写请求的字节使能直接使用 request buffer 里的值；而在缓存访问时，写请求类型为写回整个 Cache 行，字节使能无意义
@@ -293,11 +317,11 @@ assign wr_data = reg_uncached ? reg_wdata : replace_data; // 数据在 request b
 
 assign tv_w0_en = en_lookup || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b0 && ~reg_uncached) || reset;
 assign tv_w1_en = en_lookup || ((cst == MISS || cst == REPLACE || cst == REFILL) && replace_way == 1'b1 && ~reg_uncached) || reset;
-assign tv_w0_we = (cst == REFILL && replace_way == 1'b0) && ret_valid && ret_last || reset;
-assign tv_w1_we = (cst == REFILL && replace_way == 1'b1) && ret_valid && ret_last || reset;
-assign tv_wdata = reset ? 21'b0 : {reg_tag, 1'b1};  // 有效位写1
+assign tv_w0_we = (cst == REFILL && replace_way == 1'b0 && ((ret_valid && ret_last) || reg_cacop)) || reset;
+assign tv_w1_we = (cst == REFILL && replace_way == 1'b1 && ((ret_valid && ret_last) || reg_cacop)) || reset;
+assign tv_wdata = (reset || reg_cacop) ? 21'b0 : {reg_tag, 1'b1};  // 有效位写1；对于所有的CACOP指令，tagv全部清0，只对不同的code有触发的区别
 assign tv_addr = reset ? reset_cnt :
-                (cst == MISS || cst == REPLACE || cst == REFILL) ? reg_index : index;
+                (reg_cacop || cst == MISS || cst == REPLACE || cst == REFILL) ? reg_index : index;
 
 assign d_w0_b0_en = (en_lookup && (offset[3:2] == 2'b00)) || reset
                  || (need_write && write_way == 1'b0)
@@ -375,7 +399,7 @@ always @(*) begin
         nst = IDLE;
     end
     IDLE: begin
-        if (valid && (~hitwrite_conflict)) begin
+        if (valid && ~hitwrite_conflict) begin
             nst = LOOKUP;
         end
         else begin
@@ -383,7 +407,21 @@ always @(*) begin
         end
     end
     LOOKUP: begin
-        if (~cache_hit) begin
+        if (reg_cacop) begin
+            if (reg_code == 2'd0) begin
+                nst = REFILL;   // cacop 指令 cache 初始化
+            end
+            else if (cacopisdirty) begin
+                nst = MISS;     // cacop 指令查询结果为脏，需写回
+            end
+            else if (reg_code == 2'd1) begin
+                nst = REFILL;   // cacop 指令地址直接索引模式，维护一致性，结果不脏直接无效
+            end
+            else begin
+                nst = IDLE;     // cacop 指令查询结果不脏，直接返回
+            end
+        end
+        else if (~cache_hit) begin
             nst = MISS;
         end
         else if (valid && (~hitwrite_conflict)) begin   // 连续访问
@@ -402,7 +440,7 @@ always @(*) begin
         end
     end
     REPLACE: begin
-        if (rd_rdy) begin
+        if (rd_rdy || reg_cacop) begin  // 保险起见，cacop 指令不发起读请求，直接进入重填状态
             nst = REFILL;
         end
         else begin
@@ -410,7 +448,7 @@ always @(*) begin
         end
     end
     REFILL: begin
-        if ((ret_valid && ret_last) || (reg_uncached && reg_op == WRITE)) begin // 非缓存访问的 store 操作不需要也没办法等待最后一拍
+        if (reg_cacop || (ret_valid && ret_last) || (reg_uncached && reg_op == WRITE)) begin    // cacop 和非缓存访问的 store 操作不需要也没办法等待最后一拍
             nst = IDLE;
         end
         else begin
@@ -456,26 +494,21 @@ end
 
 always @(posedge clk) begin
     if (reset) begin
-        dirty_way0 <= 256'b0;
-        dirty_way1 <= 256'b0;
+        dirty_way[0] <= 256'b0;
+        dirty_way[1] <= 256'b0;
     end
     else begin
         // 处理命中写操作的脏位更新
         if (hitwrite) begin
-            if (way1_hit) begin
-                dirty_way1[reg_index] <= 1'b1;
-            end
-            else begin
-                dirty_way0[reg_index] <= 1'b1;
-            end
+            dirty_way[way1_hit][reg_index] <= 1'b1;
         end
         // 处理替换写回操作的脏位清除
         if (cst == REFILL) begin
-            if (replace_way && ret_valid && ret_last) begin
-                dirty_way1[reg_index] <= reg_op;    // 如果是 Store 缺失则为 1，Load 缺失则为 0
+            if (ret_valid && ret_last) begin
+                dirty_way[replace_way][reg_index] <= reg_op;    // 如果是 Store 缺失则为 1，Load 缺失则为 0
             end
-            else begin
-                dirty_way0[reg_index] <= reg_op;    // 如果是 Store 缺失则为 1，Load 缺失则为 0
+            else if (reg_cacop) begin
+                dirty_way[replace_way][reg_index] <= 1'b0;       // cacop 指令重填完成后脏位清 0
             end
         end
     end
@@ -495,7 +528,9 @@ always @(posedge clk) begin
     if (reset) begin
         replace_way <= 1'b0;
     end
-    // else if (cst == MISS && wr_rdy) begin
+    else if (cst == LOOKUP && reg_cacop) begin
+        replace_way <= cacop_way;   // cacop 指令查询结果决定替换的 way
+    end
     else if (ret_valid && ret_last) begin
         replace_way <= LFSR[0];
     end
@@ -519,6 +554,8 @@ always @(posedge clk) begin
         reg_wstrb <= 4'b0;
         reg_wdata <= 32'b0;
         reg_uncached <= 1'b0;
+        reg_cacop <= 1'b0;
+        reg_code <= 5'b0;
     end
     else if (addr_ok && valid) begin
         reg_op <= op;
@@ -528,6 +565,8 @@ always @(posedge clk) begin
         reg_wstrb <= wstrb;
         reg_wdata <= wdata;
         reg_uncached <= uncached;
+        reg_cacop <= cacop;
+        reg_code <= code;
     end
 end
 
