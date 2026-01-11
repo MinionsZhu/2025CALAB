@@ -266,7 +266,20 @@ wire        wbRefetch;
 wire        wbChangeTLB;
 wire        wbChangeTLBEHI;
 wire        changeTLB_stall;
+wire        changeIcache_stall;
 wire        tlb_stall;
+
+// cacop pipeline signals
+wire        id2exCacop;
+wire [ 4:0] id2exCacopCode;
+wire        id2exICacopStall;
+wire        ex2memCacop;
+wire [ 4:0] ex2memCacopCode;
+wire        ex2memICacopStall;
+wire        mem2wbCacop;
+wire [ 4:0] mem2wbCacopCode;
+wire        mem2wbICacopStall;
+wire        wbICacopStall;
 
 wire        tlbr_ex;
 wire        if_tlb_refill;
@@ -295,6 +308,8 @@ wire        icache_rst;
 wire        icache_valid;
 wire        icache_op;
 wire        icache_uncached;
+wire        icache_cacop;
+wire [ 1:0] icache_cacop_code;
 wire [ 7:0] icache_index;
 wire [19:0] icache_tag;
 wire [ 3:0] icache_offset;
@@ -304,11 +319,37 @@ wire        icache_addr_ok;
 wire        icache_data_ok;
 wire [31:0] icache_rdata;
 
+// IFU -> icache (fetch)
+wire        ifu_icache_valid;
+wire        ifu_icache_op;
+wire        ifu_icache_uncached;
+wire [ 7:0] ifu_icache_index;
+wire [19:0] ifu_icache_tag;
+wire [ 3:0] ifu_icache_offset;
+wire [ 3:0] ifu_icache_wstrb;
+wire [31:0] ifu_icache_wdata;
+wire        ifu_icache_addr_ok;
+wire        ifu_icache_data_ok;
+wire [31:0] ifu_icache_rdata;
+
+// EXU -> icache (cacop that modifies icache)
+wire        exu_icache_valid;
+wire        exu_icache_op;
+wire        exu_icache_uncached;
+wire [ 7:0] exu_icache_index;
+wire [19:0] exu_icache_tag;
+wire [ 3:0] exu_icache_offset;
+wire        exu_icache_addr_ok;
+wire        exu_icache_cacop;
+wire [ 1:0] exu_icache_cacop_code;
+
 // dcache pipeline interface
 wire        dcache_rst;
 wire        dcache_valid;
 wire        dcache_op;
 wire        dcache_uncached;
+wire        dcache_cacop;
+wire [ 1:0] dcache_cacop_code;
 wire [ 7:0] dcache_index;
 wire [19:0] dcache_tag;
 wire [ 3:0] dcache_offset;
@@ -323,7 +364,45 @@ wire        reset_core;
 assign      reset_core = reset | icache_rst | dcache_rst;
 
 assign changeTLB_stall = id2exChangeTLB | ex2memChangeTLB | mem2wbChangeTLB;
+assign changeIcache_stall = id2exICacopStall | ex2memICacopStall | mem2wbICacopStall;
 assign tlb_stall = mem2wbChangeTLBEHI | wbChangeTLBEHI;
+
+// icache arbitration: IFU fetch vs EXU icache-cacop
+reg icache_inflight;
+reg icache_inflight_owner_exu;
+wire icache_sel_exu;
+assign icache_sel_exu = !icache_inflight && exu_icache_valid;
+always @(posedge aclk) begin
+    if (reset_core) begin
+        icache_inflight <= 1'b0;
+        icache_inflight_owner_exu <= 1'b0;
+    end
+    else begin
+        if (!icache_inflight && icache_valid && icache_addr_ok) begin
+            icache_inflight <= 1'b1;
+            icache_inflight_owner_exu <= icache_sel_exu;
+        end
+        else if (icache_inflight && icache_data_ok) begin
+            icache_inflight <= 1'b0;
+        end
+    end
+end
+
+assign icache_valid       = !icache_inflight && (icache_sel_exu ? exu_icache_valid : ifu_icache_valid);
+assign icache_op          = icache_sel_exu ? exu_icache_op : ifu_icache_op;
+assign icache_uncached    = icache_sel_exu ? exu_icache_uncached : ifu_icache_uncached;
+assign icache_index       = icache_sel_exu ? exu_icache_index : ifu_icache_index;
+assign icache_tag         = icache_sel_exu ? exu_icache_tag : ifu_icache_tag;
+assign icache_offset      = icache_sel_exu ? exu_icache_offset : ifu_icache_offset;
+assign icache_wstrb       = icache_sel_exu ? 4'b0 : ifu_icache_wstrb;
+assign icache_wdata       = icache_sel_exu ? 32'b0 : ifu_icache_wdata;
+assign icache_cacop       = icache_sel_exu ? exu_icache_cacop : 1'b0;
+assign icache_cacop_code  = icache_sel_exu ? exu_icache_cacop_code : 2'b0;
+
+assign ifu_icache_addr_ok = icache_addr_ok && !icache_sel_exu;
+assign exu_icache_addr_ok = icache_addr_ok &&  icache_sel_exu;
+assign ifu_icache_data_ok = icache_data_ok && !icache_inflight_owner_exu;
+assign ifu_icache_rdata   = icache_rdata;
 
 cache u_icache(
     .clk            (aclk           ),
@@ -333,6 +412,8 @@ cache u_icache(
     .valid          (icache_valid   ),
     .op             (icache_op      ),
     .uncached       (icache_uncached),
+    .cacop          (icache_cacop   ),
+    .code           (icache_cacop_code),
     .index          (icache_index   ),
     .tag            (icache_tag     ),
     .offset         (icache_offset  ),
@@ -365,6 +446,8 @@ cache u_dcache(
     .valid          (dcache_valid   ),
     .op             (dcache_op      ),
     .uncached       (dcache_uncached),
+    .cacop          (dcache_cacop   ),
+    .code           (dcache_cacop_code),
     .index          (dcache_index   ),
     .tag            (dcache_tag     ),
     .offset         (dcache_offset  ),
@@ -399,17 +482,17 @@ IFU u_IFU(
     .ex_entry           (ex_entry       ),
     .ertn_pc            (ertn_pc        ),
     // icache interface
-    .icache_valid       (icache_valid   ),
-    .icache_op          (icache_op      ),
-    .icache_uncached    (icache_uncached),
-    .icache_index       (icache_index   ),
-    .icache_tag         (icache_tag     ),
-    .icache_offset      (icache_offset  ),
-    .icache_wstrb       (icache_wstrb   ),
-    .icache_wdata       (icache_wdata   ),
-    .icache_addr_ok     (icache_addr_ok ),
-    .icache_data_ok     (icache_data_ok ),
-    .icache_rdata       (icache_rdata   ),
+    .icache_valid       (ifu_icache_valid   ),
+    .icache_op          (ifu_icache_op      ),
+    .icache_uncached    (ifu_icache_uncached),
+    .icache_index       (ifu_icache_index   ),
+    .icache_tag         (ifu_icache_tag     ),
+    .icache_offset      (ifu_icache_offset  ),
+    .icache_wstrb       (ifu_icache_wstrb   ),
+    .icache_wdata       (ifu_icache_wdata   ),
+    .icache_addr_ok     (ifu_icache_addr_ok ),
+    .icache_data_ok     (ifu_icache_data_ok ),
+    .icache_rdata       (ifu_icache_rdata   ),
     // from IDU
     .br_taken           (br_taken       ),
     .br_taken_cancel    (br_taken_cancel),
@@ -427,6 +510,7 @@ IFU u_IFU(
     .ifValidout         (ifValidout     ),
     // refetch signal
     .changeTLB_stall    (changeTLB_stall),
+    .changeIcache_stall (changeIcache_stall),
     .wb_refetch         (wbRefetch      ),
     .wb_pc              (wb_pc          ),
     .if2idRefetch       (if2idRefetch   ),
@@ -555,7 +639,10 @@ IDU u_IDU(
     .if2idRefetch       (if2idRefetch       ),
     .id2exRefetch       (id2exRefetch       ),
     .id2exChangeTLB     (id2exChangeTLB     ),
-    .id2exChangeTLBEHI  (id2exChangeTLBEHI  )
+    .id2exChangeTLBEHI  (id2exChangeTLBEHI  ),
+    .id2exCacop         (id2exCacop         ),
+    .id2exCacopCode     (id2exCacopCode     ),
+    .id2exICacopStall   (id2exICacopStall   )
 );
 
 wire        memAllowin;
@@ -615,6 +702,19 @@ EXU u_EXU(
     .dcache_wstrb           (dcache_wstrb       ),
     .dcache_wdata           (dcache_wdata       ),
     .dcache_addr_ok         (dcache_addr_ok     ),
+    .dcache_cacop           (dcache_cacop       ),
+    .dcache_cacop_code      (dcache_cacop_code  ),
+
+    // icache interface (cacop may access icache in EX stage)
+    .icache_valid           (exu_icache_valid   ),
+    .icache_op              (exu_icache_op      ),
+    .icache_uncached        (exu_icache_uncached),
+    .icache_index           (exu_icache_index   ),
+    .icache_tag             (exu_icache_tag     ),
+    .icache_offset          (exu_icache_offset  ),
+    .icache_addr_ok         (exu_icache_addr_ok ),
+    .icache_cacop           (exu_icache_cacop   ),
+    .icache_cacop_code      (exu_icache_cacop_code),
     // TLB search interface (for Load/Store/tlbsrch instructions)
     .s1_vppn                (s1_vppn            ),
     .s1_va_bit12            (s1_va_bit12        ),
@@ -641,6 +741,12 @@ EXU u_EXU(
     .ex2memRefetch          (ex2memRefetch      ),
     .ex2memChangeTLB        (ex2memChangeTLB    ),
     .ex2memChangeTLBEHI     (ex2memChangeTLBEHI ),
+    .id2exCacop              (id2exCacop         ),
+    .id2exCacopCode          (id2exCacopCode     ),
+    .id2exICacopStall        (id2exICacopStall   ),
+    .ex2memCacop             (ex2memCacop        ),
+    .ex2memCacopCode         (ex2memCacopCode    ),
+    .ex2memICacopStall       (ex2memICacopStall  ),
     .csr_crmd_plv       (crmd_plv       ),
     .csr_crmd_da        (crmd_da        ),
     .csr_crmd_pg        (crmd_pg        ),
@@ -692,6 +798,8 @@ MEMU u_MEMU(
     // dcache interface
     .dcache_data_ok         (dcache_data_ok     ),
     .dcache_rdata           (dcache_rdata       ),
+    // icache data_ok (for icache cacop completion)
+    .icache_data_ok         (icache_data_ok     ),
     // to IDU   
     .MEM_to_IDU_csr         (MEM_to_IDU_csr     ),
     .MEM_to_IDU_gr_we       (MEM_to_IDU_gr_we   ),
@@ -713,7 +821,13 @@ MEMU u_MEMU(
     .ex2memChangeTLBEHI     (ex2memChangeTLBEHI ),
     .mem2wbRefetch          (mem2wbRefetch      ),
     .mem2wbChangeTLB        (mem2wbChangeTLB    ),
-    .mem2wbChangeTLBEHI     (mem2wbChangeTLBEHI )
+    .mem2wbChangeTLBEHI     (mem2wbChangeTLBEHI ),
+    .ex2memCacop             (ex2memCacop        ),
+    .ex2memCacopCode         (ex2memCacopCode    ),
+    .ex2memICacopStall       (ex2memICacopStall  ),
+    .mem2wbCacop             (mem2wbCacop        ),
+    .mem2wbCacopCode         (mem2wbCacopCode    ),
+    .mem2wbICacopStall       (mem2wbICacopStall  )
 );
 
 wire [ 4:0] rf_waddr;
@@ -780,6 +894,8 @@ WBU u_WBU(
     .wbRefetch          (wbRefetch          ),
     .wbChangeTLB        (wbChangeTLB        ),
     .wbChangeTLBEHI     (wbChangeTLBEHI     ),
+    .mem2wbICacopStall   (mem2wbICacopStall  ),
+    .wbICacopStall       (wbICacopStall      ),
     .tlbr_ex            (tlbr_ex            ),
     .if_tlb_refill      (if_tlb_refill      ),
     .if_plv_ex          (if_plv_ex         )

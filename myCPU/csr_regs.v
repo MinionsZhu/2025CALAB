@@ -591,6 +591,8 @@ module csr_regs (
     wire    [31:0]  csr_tlbelo1_rvalue;
     wire    [31:0]  csr_asid_rvalue;
     wire    [31:0]  csr_tlbrentry_rvalue;
+    wire    [31:0]  csr_dmw0_rvalue;
+    wire    [31:0]  csr_dmw1_rvalue;
     assign csr_crmd_rvalue   = {23'b0, csr_crmd_datm, csr_crmd_datf, csr_crmd_pg, csr_crmd_da, csr_crmd_ie, csr_crmd_plv};
     assign csr_prmd_rvalue   = {29'b0, csr_prmd_pie, csr_prmd_pplv};
     assign csr_ecfg_rvalue   = {19'b0, csr_ecfg_lie};
@@ -611,6 +613,8 @@ module csr_regs (
     assign csr_tlbelo1_rvalue   = {4'b0, csr_tlbelo1_ppn, 1'b0, csr_tlbelo1_g, csr_tlbelo1_mat, csr_tlbelo1_plv, csr_tlbelo1_d, csr_tlbelo1_v};
     assign csr_asid_rvalue      = {8'b0, 8'd10, 6'b0, csr_asid_asid};
     assign csr_tlbrentry_rvalue = {csr_tlbrentry_pa, 6'b0};
+    assign csr_dmw0_rvalue = {csr_dmw0_vseg, 1'b0, csr_dmw0_pseg, 19'b0, csr_dmw0_mat, csr_dmw0_plv3, 2'b0, csr_dmw0_plv0};
+    assign csr_dmw1_rvalue = {csr_dmw1_vseg, 1'b0, csr_dmw1_pseg, 19'b0, csr_dmw1_mat, csr_dmw1_plv3, 2'b0, csr_dmw1_plv0};
     assign csr_rvalue = {32{csr_num == `CSR_CRMD}}   & csr_crmd_rvalue   |
                         {32{csr_num == `CSR_PRMD}}   & csr_prmd_rvalue   |
                         {32{csr_num == `CSR_ECFG}}   & csr_ecfg_rvalue   |
@@ -631,6 +635,8 @@ module csr_regs (
                         {32{csr_num == `CSR_TLBELO1}} & csr_tlbelo1_rvalue |
                         {32{csr_num == `CSR_ASID}}    & csr_asid_rvalue    |
                         {32{csr_num == `CSR_TLBRENTRY}} & csr_tlbrentry_rvalue |
+                        {32{csr_num == `CSR_DMW0}} & csr_dmw0_rvalue |
+                        {32{csr_num == `CSR_DMW1}} & csr_dmw1_rvalue |
                         32'b0;  // contains ticlr
     assign ertn_pc  = csr_era_pc;
     assign ex_entry = {csr_eentry_va, 6'b0};

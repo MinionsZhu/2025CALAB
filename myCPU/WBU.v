@@ -69,6 +69,8 @@ module WBU(
     output wire        wbRefetch,
     output wire        wbChangeTLB,
     output wire        wbChangeTLBEHI,
+    input  wire        mem2wbICacopStall,
+    output wire        wbICacopStall,
 
     output wire        tlbr_ex,
     output wire        if_tlb_refill,
@@ -87,6 +89,7 @@ reg [ 9:0] tlb_signals_reg;
 reg        refetch;
 reg        changeTLB;
 reg        changeTLBEHI;
+reg        icacop_stall;
 
 wire [31:0] pc;
 wire [31:0] inst;
@@ -185,6 +188,15 @@ always @(posedge clk) begin
 end
 assign wbChangeTLB = changeTLB && wbValidReg;
 assign wbChangeTLBEHI = changeTLBEHI && wbValidReg;
+always @(posedge clk) begin
+    if (reset) begin
+        icacop_stall <= 1'b0;
+    end
+    else if (wbAllowin && memValidout) begin
+        icacop_stall <= mem2wbICacopStall;
+    end
+end
+assign wbICacopStall = icacop_stall && wbValidReg;
 
 assign pc = pc_reg;
 assign inst = inst_reg;

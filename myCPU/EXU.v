@@ -54,6 +54,21 @@ module EXU(
     output wire [31:0] dcache_wdata,
     input  wire        dcache_addr_ok,
 
+    output wire        dcache_cacop,
+    output wire [ 1:0] dcache_cacop_code,
+
+    // icache interface
+    output wire        icache_valid,
+    output wire        icache_op,
+    output wire        icache_uncached,
+    output wire [ 7:0] icache_index,
+    output wire [19:0] icache_tag,
+    output wire [ 3:0] icache_offset,
+    input  wire        icache_addr_ok,
+    output wire        icache_cacop,
+    output wire [ 1:0] icache_cacop_code,
+
+
     // TLB search interface (for Load/Store/tlbsrch instructions)
     output wire [18:0] s1_vppn,
     output wire        s1_va_bit12,
@@ -81,6 +96,12 @@ module EXU(
     output wire        ex2memRefetch,
     output wire        ex2memChangeTLB,
     output wire        ex2memChangeTLBEHI,
+    input  wire        id2exCacop,
+    input  wire [ 4:0] id2exCacopCode,
+    input  wire        id2exICacopStall,
+    output wire        ex2memCacop,
+    output wire [ 4:0] ex2memCacopCode,
+    output wire        ex2memICacopStall,
 
     input  wire [1:0]  csr_crmd_plv,
     input  wire        csr_crmd_da,
@@ -111,6 +132,9 @@ reg [9:0]   tlb_signals_reg;
 reg         refetch;
 reg         changeTLB;
 reg         changeTLBEHI;
+reg         cacop;
+reg  [ 4:0] cacop_code;
+reg         icacop_stall;
 
 reg         signed_div_dividend_tvalid_reg;
 reg         signed_div_divisor_tvalid_reg;
@@ -255,6 +279,22 @@ always @(posedge clk) begin
 end
 assign ex2memChangeTLB = changeTLB && exValidReg;
 assign ex2memChangeTLBEHI = changeTLBEHI && exValidReg;
+always @(posedge clk) begin
+    if (reset) begin
+        cacop <= 1'b0;
+        cacop_code <= 5'b0;
+        icacop_stall <= 1'b0;
+    end
+    else if (exAllowin && idValidout) begin
+        cacop <= id2exCacop;
+        cacop_code <= id2exCacopCode;
+        icacop_stall <= id2exICacopStall;
+    end
+end
+assign ex2memCacop = cacop && exValidReg;
+assign ex2memCacopCode = cacop_code;
+assign ex2memICacopStall = icacop_stall && exValidReg;
+
 always @(posedge clk) begin
     if (reset) begin
         div_signals_reg <= 5'b0;
@@ -425,17 +465,18 @@ assign addr_ptt = {s1_ppn, alu_result[11:0]};
 assign addr_dmw0 = {csr_dmw0_pseg, alu_result[28:0]};
 assign addr_dmw1 = {csr_dmw1_pseg, alu_result[28:0]};
 assign dmw0_hit = (csr_dmw0_plv0 && (csr_crmd_plv == 2'b0) || csr_dmw0_plv3 && (csr_crmd_plv == 2'b11)) &&
-                  (alu_result[31:29] == csr_dmw0_vseg) && (csr_crmd_datf == csr_dmw0_mat);
+                  (alu_result[31:29] == csr_dmw0_vseg);
 assign dmw1_hit = (csr_dmw1_plv0 && (csr_crmd_plv == 2'b0) || csr_dmw1_plv3 && (csr_crmd_plv == 2'b11)) &&
-                  (alu_result[31:29] == csr_dmw1_vseg) && (csr_crmd_datf == csr_dmw1_mat);
-assign addr_phy = dat ? alu_result :
+                  (alu_result[31:29] == csr_dmw1_vseg);
+assign addr_phy = cacop_direct_mem ? alu_result :
+                  dat ? alu_result :
                   pat? (dmw0_hit ? addr_dmw0 :
                         dmw1_hit ? addr_dmw1 :
                                    addr_ptt) :
                   32'b0; // should not happen
-assign use_tlb = pat && !dmw0_hit && !dmw1_hit && is_sram_inst;
+assign use_tlb = pat && !dmw0_hit && !dmw1_hit && is_sram_inst && !(cacop && (cacop_code[4]==1'b0)); // cacop with code[4]==0 does not access data memory
 assign tlbr_ex = use_tlb && !s1_found;
-assign pil_ex = use_tlb && (|res_from_mem) && s1_found && !s1_v;
+assign pil_ex = use_tlb && (|res_from_mem || cacop) && s1_found && !s1_v;
 assign pis_ex = use_tlb && (|mem_we) && s1_found && !s1_v;
 assign pme_ex = use_tlb && s1_found && s1_v && !s1_d && (|mem_we) 
              && (csr_crmd_plv == 2'b00 || (csr_crmd_plv == 2'b01 &&(s1_plv == 2'b01 || s1_plv == 2'b10 || s1_plv == 2'b11)) ||
@@ -444,9 +485,9 @@ assign pme_ex = use_tlb && s1_found && s1_v && !s1_d && (|mem_we)
 assign ppi_ex = use_tlb && s1_found && s1_v && (csr_crmd_plv > s1_plv);
 assign addr_ex = tlbr_ex || pil_ex || pis_ex || pme_ex || ppi_ex || newecode==`ECODE_PIF;
 
-assign is_sram_inst = (|res_from_mem || |mem_we) && exValidReg && !isale && !exception && !refetch;
-assign dcache_valid = is_sram_inst && memAllowin && !memStopMemAccess && !wb_ex && !ertn_flush && !addr_ex;
-assign dcache_op    = |mem_we;
+assign is_sram_inst = (|res_from_mem || |mem_we || cacop) && exValidReg && !isale && !exception && !refetch;
+assign dcache_valid = is_sram_inst && !icacop_stall && memAllowin && !memStopMemAccess && !wb_ex && !ertn_flush && !addr_ex;
+assign dcache_op    = |mem_we || (cacop);
 assign dcache_wstrb = (~exValidReg || wb_ex || isale) ? 4'b0 :
                     mem_we[2] ? 4'b1111 :
                     mem_we[1] ? (mem_offsets[1]       ? 4'b1100 : 4'b0011):
@@ -458,18 +499,33 @@ assign dcache_wstrb = (~exValidReg || wb_ex || isale) ? 4'b0 :
 assign is_sram_w = mem_we[2] || res_from_mem[4];
 assign is_sram_h = mem_we[1] || res_from_mem[3] || res_from_mem[1];
 assign is_sram_b = mem_we[0] || res_from_mem[2] || res_from_mem[0];
+assign cacop_direct_mem = cacop && (cacop_code[4]==1'b0);
+assign cacop_tlb_mem = cacop && (cacop_code[4:3]==2'b10);
 assign dcache_addr    = is_sram_w ? { addr_phy[31:2], 2'b00 } :
                         is_sram_h ? { addr_phy[31:1], 1'b0  } :
-                        is_sram_b ? { addr_phy[31:0]        } :  32'b0;
+                        is_sram_b ? { addr_phy[31:0]        } :  
+                        cacop_direct_mem ? { addr_phy[31:0] } :
+                        cacop_tlb_mem ? { addr_phy[31:0]    } :
+                        32'b0;
 assign {dcache_tag, dcache_index, dcache_offset} = dcache_addr[31:0];
 assign dcache_wdata   = mem_we[2] ?    rkd_value :
                             mem_we[1] ? {2{rkd_value[15:0]}} :
                             mem_we[0] ? {4{rkd_value[ 7:0]}} : 32'b0;
-assign dcache_uncached = (dat) ? (csr_crmd_datm == 2'b00) :
+assign dcache_uncached = (cacop) ? 1'b0 :
+                         (dat) ? (csr_crmd_datm == 2'b00) :
                          (pat) ? ((dmw0_hit) ? (csr_dmw0_mat == 2'b00) :
                                   (dmw1_hit) ? (csr_dmw1_mat == 2'b00) :
                                   (s1_mat == 2'b00)) : 
                                 1'b0; // should not happen
+assign dcache_cacop = cacop && !icacop_stall;
+assign dcache_cacop_code = cacop_code[4:3];
+
+assign icache_valid = is_sram_inst && icacop_stall && memAllowin && !memStopMemAccess && !wb_ex && !ertn_flush && !addr_ex;
+assign icache_op    = 1'b1; // write
+assign {icache_tag, icache_index, icache_offset} = addr_phy[31:0];
+assign icache_uncached = 1'b0; // icache access is always cached
+assign icache_cacop = cacop && icacop_stall;
+assign icache_cacop_code = cacop_code[4:3];
 
 // ALE exception
 assign isale  = (~(alu_result[1:0] == 2'b0) & (mem_we[2] | res_from_mem[4]))|    // word-aligned check
@@ -520,7 +576,7 @@ always @(posedge clk) begin
     end
 end
 assign exReadygo  =  use_div        ? (signed_div_dout_valid | unsigned_div_dout_valid) :
-                     is_sram_inst   ? (dcache_addr_ok && dcache_valid || exception || addr_ex) : 
+                     is_sram_inst   ? ((dcache_addr_ok && dcache_valid) || exception || addr_ex || (icache_addr_ok && icache_valid)) : 
                      tlb_stall      ? 1'b0 : 1'b1;
 assign exValidout =  exValidReg &&  exReadygo;
 assign exAllowin  = !exValidReg || (exReadygo && memAllowin);

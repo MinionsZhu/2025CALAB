@@ -44,6 +44,7 @@ module IFU(
 
     // refetch signal
     input  wire        changeTLB_stall,
+    input  wire        changeIcache_stall,
     input  wire        wb_refetch,
     input  wire [31:0] wb_pc,
     output wire        if2idRefetch,
@@ -124,7 +125,7 @@ module IFU(
     data_buffer if_inst_buffer(
         .clk(clk),
         .reset(reset),
-        .dataReq(idAllowin || instCancelReg),
+        .dataReq((idAllowin && ifValidout) || instCancelReg),
         .Validin(icache_data_ok),
         .data_in(icache_rdata),
         .Validout(instValidout),
@@ -158,9 +159,9 @@ module IFU(
     wire dmw0_hit;
     wire dmw1_hit;
     assign dmw0_hit = ((csr_crmd_plv == 0 && csr_dmw0_plv0) || (csr_crmd_plv == 3 && csr_dmw0_plv3)) &&
-                      (nextpc[31:29] == csr_dmw0_vseg) && (csr_crmd_datf == csr_dmw0_mat);
+                      (nextpc[31:29] == csr_dmw0_vseg);
     assign dmw1_hit = ((csr_crmd_plv == 0 && csr_dmw1_plv0) || (csr_crmd_plv == 3 && csr_dmw1_plv3)) &&
-                      (nextpc[31:29] == csr_dmw1_vseg) && (csr_crmd_datf == csr_dmw1_mat);
+                      (nextpc[31:29] == csr_dmw1_vseg);
     wire [31:0] nextpc_dmw0;
     assign nextpc_dmw0 = {csr_dmw0_pseg, nextpc[28:0]};
 
@@ -208,12 +209,14 @@ module IFU(
         end
     end
 
+    wire  stall;
+    assign stall = changeTLB_stall || changeIcache_stall;
     always @(posedge clk) begin
         if (reset) begin
             refetch <= 1'b0;
         end
         else if (ifAllowin) begin
-            refetch <= changeTLB_stall;
+            refetch <= stall;
         end
     end
 
@@ -252,7 +255,7 @@ module IFU(
     wire   if_addr_ex;
     assign if_addr_ex = tlbr_ex_reg || pif_ex_reg || ppi_ex_reg;
     assign ifValidout = ifValidReg && ifReadygo;    // exp14 BUG: do not write (ifValidReg || instValidout) && ifReadygo
-    assign ifReadygo = (icache_data_ok || instValidout || if_addr_ex) && !instCancelReg && !changeTLB_stall;
+    assign ifReadygo = (icache_data_ok || instValidout || if_addr_ex) && !instCancelReg && !stall;
     assign ifAllowin = (!ifValidReg || (ifReadygo && idAllowin)) && !instCancelReg;
 
     assign seq_pc    = pc + 4;
@@ -261,7 +264,7 @@ module IFU(
     /*******************************/
     /*      icache interface       */
     /*******************************/
-    assign icache_valid     = preifValidReg && ifAllowin && !preif_addr_ex;
+    assign icache_valid     = preifValidReg && ifAllowin && !preif_addr_ex && !changeIcache_stall;
     assign icache_op        = 1'b0;
     assign icache_wstrb     = 4'b0000;
     assign icache_wdata     = 32'b0;

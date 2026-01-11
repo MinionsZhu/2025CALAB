@@ -68,7 +68,10 @@ module IDU(
     input  wire        if2idRefetch,
     output wire        id2exRefetch,
     output wire        id2exChangeTLB,
-    output wire        id2exChangeTLBEHI // stall signal for EHI write
+    output wire        id2exChangeTLBEHI, // stall signal for EHI write
+    output wire        id2exCacop,
+    output wire [ 4:0] id2exCacopCode,
+    output wire        id2exICacopStall
 );
 
 reg         idValidReg;
@@ -303,6 +306,8 @@ assign inst_tlbwr   = op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & 
 assign inst_tlbfill = op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & op_19_15_d[5'h10] & rk == 5'hd & rj == 5'h0 & rd == 5'h0;
 assign inst_invtlb  = op_31_26_d[6'h01] & op_25_22_d[4'h9] & op_21_20_d[2'h0] & op_19_15_d[5'h13];
 
+assign inst_cacop   = op_31_26_d[6'h01] & op_25_22_d[4'h8];
+
 assign allinst =   (inst_rdcntvl_w | inst_rdcntvh_w | inst_rdcntid_w |
                     inst_add_w  | inst_sub_w  | inst_slt    | inst_sltu  |
                     inst_nor    | inst_and    | inst_or     | inst_xor   |
@@ -324,7 +329,7 @@ assign allinst =   (inst_rdcntvl_w | inst_rdcntvh_w | inst_rdcntid_w |
                     inst_break  | inst_syscall|
                     inst_csrrd  | inst_csrwr  | inst_csrxchg|
                     inst_ertn   | inst_tlbsrch | inst_tlbrd | inst_tlbwr  |
-                    inst_tlbfill| inst_invtlb );
+                    inst_tlbfill| inst_invtlb | inst_cacop );
 assign invtlb_ine = (inst_invtlb & invtlb_opcode > 5'h6);
 assign ine = ~(allinst) || invtlb_ine;    // if fetch address exception, then inst is invalid
 
@@ -332,7 +337,7 @@ assign need_ui5   = inst_slli_w | inst_srli_w | inst_srai_w;
 assign need_si12  = inst_addi_w |
                     inst_ld_w | inst_ld_h | inst_ld_b | inst_ld_hu | inst_ld_bu |
                     inst_st_w | inst_st_h | inst_st_b |
-                    inst_slti | inst_sltui;
+                    inst_slti | inst_sltui | inst_cacop;
 assign need_ui12  = inst_andi | inst_ori | inst_xori;
 assign need_si16  = inst_jirl | inst_beq | inst_bne |
                                 inst_blt | inst_bge |
@@ -520,12 +525,13 @@ assign src2_is_imm   = inst_slli_w |
                     inst_lu12i_w|
                     inst_pcaddu12i|
                     inst_jirl   |
-                    inst_bl     ;
+                    inst_bl |
+                    inst_cacop  ;
 
 assign alu_op[ 0] = inst_add_w | inst_addi_w |
                     inst_ld_w | inst_ld_h | inst_ld_b | inst_ld_hu | inst_ld_bu |
                     inst_st_w | inst_st_h | inst_st_b |
-                    inst_jirl | inst_bl | inst_pcaddu12i;
+                    inst_jirl | inst_bl | inst_pcaddu12i | inst_cacop;
 assign alu_op[ 1] = inst_sub_w;
 assign alu_op[ 2] = inst_slt | inst_slti;
 assign alu_op[ 3] = inst_sltu | inst_sltui;
@@ -595,7 +601,7 @@ assign gr_we         = ~(inst_st_w | inst_st_h | inst_st_b |
                         inst_bltu | inst_bgeu | inst_b |
                         inst_ertn |
                         inst_break | inst_syscall |
-                        inst_tlbsrch | inst_tlbrd | inst_tlbwr | inst_tlbfill | inst_invtlb);
+                        inst_tlbsrch | inst_tlbrd | inst_tlbwr | inst_tlbfill | inst_invtlb | inst_cacop);
 assign mem_we        = {inst_st_w, inst_st_h, inst_st_b};
 assign dest          = dst_is_r1 ? 5'd1 : 
                     inst_rdcntid_w ? rj : rd;    // special case for rdcntid.w
@@ -629,6 +635,13 @@ assign id2exChangeTLB = (inst_tlbwr | inst_tlbfill | inst_tlbrd | inst_invtlb |
                         | csr_num == `CSR_ASID
                         ))) & idValidReg;
 assign id2exChangeTLBEHI = (csr_we & (csr_num == `CSR_TLBEHI)) & idValidReg;
+
+////////////////////////////////////////////////////////////////////////
+//////                      cacop signals                        ///////
+////////////////////////////////////////////////////////////////////////
+assign id2exCacop = inst_cacop & idValidReg;
+assign id2exCacopCode = rd;
+assign id2exICacopStall = rd[2:0] == 3'b000 && id2exCacop; // cacop.opcode[2:0] == 3'b000 means icacop.stall
 
 ////////////////////////////////////////////////////////////////////////
 //////                      register interface                   ///////

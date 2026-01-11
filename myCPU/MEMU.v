@@ -29,6 +29,8 @@ module MEMU(
     // data from dcache
     input  wire [31:0] dcache_rdata,
     input  wire        dcache_data_ok,
+    // data from icache
+    input  wire        icache_data_ok,
     // to IDU
     output wire        MEM_to_IDU_csr,
     output wire        MEM_to_IDU_gr_we,
@@ -52,7 +54,13 @@ module MEMU(
     input  wire        ex2memChangeTLBEHI,
     output wire        mem2wbRefetch,
     output wire        mem2wbChangeTLB,
-    output wire        mem2wbChangeTLBEHI
+    output wire        mem2wbChangeTLBEHI,
+    input  wire        ex2memCacop,
+    input  wire [ 4:0] ex2memCacopCode,
+    input  wire        ex2memICacopStall,
+    output wire        mem2wbCacop,
+    output wire [ 4:0] mem2wbCacopCode,
+    output wire        mem2wbICacopStall
 );
 
 reg         memValidReg;
@@ -65,6 +73,9 @@ reg  [9:0] tlb_signals_reg;
 reg         refetch;
 reg         changeTLB;
 reg         changeTLBEHI;
+reg         cacop;
+reg  [ 4:0] cacop_code;
+reg         icacop_stall;
 
 wire [31:0] pc;
 wire [31:0] inst;
@@ -166,6 +177,21 @@ always @(posedge clk) begin
 end
 assign mem2wbChangeTLB = changeTLB && memValidReg;
 assign mem2wbChangeTLBEHI = changeTLBEHI && memValidReg;
+always @(posedge clk) begin
+    if (reset) begin
+        cacop <= 1'b0;
+        cacop_code <= 5'b0;
+        icacop_stall <= 1'b0;
+    end
+    else if (memAllowin && exValidout) begin
+        cacop <= ex2memCacop;
+        cacop_code <= ex2memCacopCode;
+        icacop_stall <= ex2memICacopStall;
+    end
+end
+assign mem2wbCacop = cacop && memValidReg;
+assign mem2wbCacopCode = cacop_code;
+assign mem2wbICacopStall = icacop_stall && memValidReg;
 
 assign {csr, csr_we, csr_num, csr_wmask, csr_wvalue, exception, ecode, syscall_code, memErtnFlush, ifTlbrPass, ifPpiPass} = csr_signals_reg;
 
@@ -225,7 +251,7 @@ end
 wire ecodeForReadygo;
 assign ecodeForReadygo = ecode==`ECODE_TLBR || ecode==`ECODE_PIL || ecode==`ECODE_PIF || ecode==`ECODE_PIS || ecode==`ECODE_PME || ecode==`ECODE_PPI;
 
-assign memReadygo  =  is_sram_inst ? (dcache_data_ok || (exception && ecodeForReadygo)) : 1'b1;
+assign memReadygo  =  is_sram_inst ? (dcache_data_ok || (exception && ecodeForReadygo) || (icacop_stall && icache_data_ok)) : 1'b1;
 assign memValidout =  memValidReg &&  memReadygo;
 assign memAllowin  = (!memValidReg || (memReadygo && wbAllowin));
 
