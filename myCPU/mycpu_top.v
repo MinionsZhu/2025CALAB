@@ -370,37 +370,103 @@ assign tlb_stall = mem2wbChangeTLBEHI | wbChangeTLBEHI;
 // icache arbitration: IFU fetch vs EXU icache-cacop
 reg icache_inflight;
 reg icache_inflight_owner_exu;
-wire icache_sel_exu;
-assign icache_sel_exu = !icache_inflight && exu_icache_valid;
+// One-entry request buffer to break combinational loops between pipeline valid/allowin and cache addr_ok.
+reg         icache_req_valid;
+reg         icache_req_owner_exu;
+reg         icache_req_op;
+reg         icache_req_uncached;
+reg         icache_req_cacop;
+reg  [ 1:0] icache_req_cacop_code;
+reg  [ 7:0] icache_req_index;
+reg  [19:0] icache_req_tag;
+reg  [ 3:0] icache_req_offset;
+reg  [ 3:0] icache_req_wstrb;
+reg  [31:0] icache_req_wdata;
+
+wire icache_busy;
+assign icache_busy = icache_inflight || icache_req_valid;
+
+// Arbitration/acceptance (accept into buffer, NOT dependent on cache addr_ok)
+wire take_exu;
+wire take_ifu;
+assign take_exu = !icache_busy && exu_icache_valid;
+assign take_ifu = !icache_busy && !exu_icache_valid && ifu_icache_valid;
+
+assign exu_icache_addr_ok = take_exu;
+assign ifu_icache_addr_ok = take_ifu;
+
+wire issue_from_buf;
+wire issue_from_exu;
+wire issue_from_ifu;
+assign issue_from_buf = icache_req_valid;
+assign issue_from_exu = !issue_from_buf && take_exu;
+assign issue_from_ifu = !issue_from_buf && take_ifu;
 always @(posedge aclk) begin
     if (reset_core) begin
         icache_inflight <= 1'b0;
         icache_inflight_owner_exu <= 1'b0;
+        icache_req_valid <= 1'b0;
+        icache_req_owner_exu <= 1'b0;
+        icache_req_op <= 1'b0;
+        icache_req_uncached <= 1'b0;
+        icache_req_cacop <= 1'b0;
+        icache_req_cacop_code <= 2'b0;
+        icache_req_index <= 8'b0;
+        icache_req_tag <= 20'b0;
+        icache_req_offset <= 4'b0;
+        icache_req_wstrb <= 4'b0;
+        icache_req_wdata <= 32'b0;
     end
     else begin
-        if (!icache_inflight && icache_valid && icache_addr_ok) begin
-            icache_inflight <= 1'b1;
-            icache_inflight_owner_exu <= icache_sel_exu;
+        if (icache_inflight) begin
+            if (icache_data_ok) begin
+                icache_inflight <= 1'b0;
+            end
         end
-        else if (icache_inflight && icache_data_ok) begin
-            icache_inflight <= 1'b0;
+        else begin
+            // If there is a buffered request, wait for cache to accept it (addr_ok) then mark inflight.
+            if (icache_req_valid) begin
+                if (icache_addr_ok) begin
+                    icache_inflight <= 1'b1;
+                    icache_inflight_owner_exu <= icache_req_owner_exu;
+                    icache_req_valid <= 1'b0;
+                end
+            end
+            // Otherwise, accept a new request from EXU/IFU. If cache can accept immediately, go inflight;
+            // if not, store into request buffer.
+            else if (take_exu || take_ifu) begin
+                if (icache_addr_ok) begin
+                    icache_inflight <= 1'b1;
+                    icache_inflight_owner_exu <= take_exu;
+                end
+                else begin
+                    icache_req_valid <= 1'b1;
+                    icache_req_owner_exu <= take_exu;
+                    icache_req_op <= take_exu ? exu_icache_op : ifu_icache_op;
+                    icache_req_uncached <= take_exu ? exu_icache_uncached : ifu_icache_uncached;
+                    icache_req_cacop <= take_exu ? exu_icache_cacop : 1'b0;
+                    icache_req_cacop_code <= take_exu ? exu_icache_cacop_code : 2'b0;
+                    icache_req_index <= take_exu ? exu_icache_index : ifu_icache_index;
+                    icache_req_tag <= take_exu ? exu_icache_tag : ifu_icache_tag;
+                    icache_req_offset <= take_exu ? exu_icache_offset : ifu_icache_offset;
+                    icache_req_wstrb <= take_exu ? 4'b0 : ifu_icache_wstrb;
+                    icache_req_wdata <= take_exu ? 32'b0 : ifu_icache_wdata;
+                end
+            end
         end
     end
 end
 
-assign icache_valid       = !icache_inflight && (icache_sel_exu ? exu_icache_valid : ifu_icache_valid);
-assign icache_op          = icache_sel_exu ? exu_icache_op : ifu_icache_op;
-assign icache_uncached    = icache_sel_exu ? exu_icache_uncached : ifu_icache_uncached;
-assign icache_index       = icache_sel_exu ? exu_icache_index : ifu_icache_index;
-assign icache_tag         = icache_sel_exu ? exu_icache_tag : ifu_icache_tag;
-assign icache_offset      = icache_sel_exu ? exu_icache_offset : ifu_icache_offset;
-assign icache_wstrb       = icache_sel_exu ? 4'b0 : ifu_icache_wstrb;
-assign icache_wdata       = icache_sel_exu ? 32'b0 : ifu_icache_wdata;
-assign icache_cacop       = icache_sel_exu ? exu_icache_cacop : 1'b0;
-assign icache_cacop_code  = icache_sel_exu ? exu_icache_cacop_code : 2'b0;
-
-assign ifu_icache_addr_ok = icache_addr_ok && !icache_sel_exu;
-assign exu_icache_addr_ok = icache_addr_ok &&  icache_sel_exu;
+assign icache_valid       = !icache_inflight && (issue_from_buf || take_exu || take_ifu);
+assign icache_op          = issue_from_buf ? icache_req_op : (issue_from_exu ? exu_icache_op : ifu_icache_op);
+assign icache_uncached    = issue_from_buf ? icache_req_uncached : (issue_from_exu ? exu_icache_uncached : ifu_icache_uncached);
+assign icache_index       = issue_from_buf ? icache_req_index : (issue_from_exu ? exu_icache_index : ifu_icache_index);
+assign icache_tag         = issue_from_buf ? icache_req_tag : (issue_from_exu ? exu_icache_tag : ifu_icache_tag);
+assign icache_offset      = issue_from_buf ? icache_req_offset : (issue_from_exu ? exu_icache_offset : ifu_icache_offset);
+assign icache_wstrb       = issue_from_buf ? icache_req_wstrb : (issue_from_exu ? 4'b0 : ifu_icache_wstrb);
+assign icache_wdata       = issue_from_buf ? icache_req_wdata : (issue_from_exu ? 32'b0 : ifu_icache_wdata);
+assign icache_cacop       = issue_from_buf ? icache_req_cacop : (issue_from_exu ? exu_icache_cacop : 1'b0);
+assign icache_cacop_code  = issue_from_buf ? icache_req_cacop_code : (issue_from_exu ? exu_icache_cacop_code : 2'b0);
 assign ifu_icache_data_ok = icache_data_ok && !icache_inflight_owner_exu;
 assign ifu_icache_rdata   = icache_rdata;
 
